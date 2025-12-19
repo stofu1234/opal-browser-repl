@@ -7,6 +7,8 @@ Chrome DevToolsにOpal Ruby REPLパネルを追加するブラウザ拡張機能
 - DevToolsに「Opal REPL」タブを追加
 - ブラウザコンソールでRubyコードを直接実行
 - バッククォートでJavaScriptを実行可能（例: `` `console.log("hello")` ``）
+- `Native()` ラッパーでJSオブジェクトをRubyライクに操作
+- ローカル変数・メソッド定義が保持される（IRBモード）
 - ページにOpalがある場合は自動検出、ない場合は自動注入
 - コマンド履歴（↑/↓キー）
 - 複数ブラウザ対応を前提とした構成
@@ -16,13 +18,18 @@ Chrome DevToolsにOpal Ruby REPLパネルを追加するブラウザ拡張機能
 ### 1. ビルド
 
 ```bash
-# Opalライブラリのフェッチ、アイコン作成、ビルドを一括実行
+# Opalライブラリのビルド、アイコン作成、拡張機能ビルドを一括実行
 npm run setup
 
 # または個別に実行
-npm run fetch-opal
+npm run build-opal    # Ruby/Opal環境が必要
 npm run create-icons
 npm run build
+```
+
+**注意**: `npm run build-opal` にはRubyとOpal gemが必要です。
+```bash
+gem install opal
 ```
 
 ### 2. Chromeにインストール
@@ -40,19 +47,63 @@ npm run build
 
 ## 使用例
 
+### 基本的なRuby
+
 ```ruby
-# 基本的なRuby
 puts "Hello, World!"
 [1, 2, 3].map { |x| x * 2 }
+```
 
-# バッククォートでJavaScript実行
+### バッククォートでJavaScript実行
+
+```ruby
 `document.title`
 `window.location.href`
-
-# DOMの操作
 `document.querySelector('h1').textContent = 'Changed!'`
+```
 
-# ページ上のOpalクラスにアクセス（Opalアプリの場合）
+### Native()でJSオブジェクトをRubyライクに操作
+
+```ruby
+# DOMにアクセス
+doc = Native(`document`)
+doc[:title]                           # => "Page Title"
+doc[:location][:href]                 # => "http://..."
+
+# メソッド呼び出し
+doc.getElementById('app')[:innerHTML]
+doc.querySelector('h1')[:textContent]
+
+# windowオブジェクト
+win = Native(`window`)
+win[:innerWidth]                      # => 1920
+
+# 複雑な操作
+items = Native(`document.querySelectorAll('li')`)
+items[:length]
+```
+
+### 変数とメソッドの保持
+
+```ruby
+# ローカル変数は保持されます
+x = 10
+x * 2  # => 20
+
+# メソッド定義も保持されます
+def greet(name)
+  "Hello, #{name}!"
+end
+greet("Ruby")  # => "Hello, Ruby!"
+
+# インスタンス変数も使えます
+@counter = 0
+@counter += 1
+```
+
+### ページ上のOpalクラスにアクセス（Opalアプリの場合）
+
+```ruby
 TodoController.new
 ```
 
@@ -78,12 +129,12 @@ opal-browser-repl/
 
 | コマンド | 説明 |
 |----------|------|
-| `npm run setup` | 初回セットアップ（fetch-opal + create-icons + build） |
+| `npm run setup` | 初回セットアップ（build-opal + create-icons + build） |
 | `npm run build` | 全ブラウザ向けビルド |
 | `npm run build:chrome` | Chrome向けビルド |
 | `npm run build:firefox` | Firefox向けビルド（未実装） |
 | `npm run dev` | ウォッチモードでビルド |
-| `npm run fetch-opal` | OpalライブラリをCDNから取得 |
+| `npm run build-opal` | Opal gemからJSライブラリをビルド（要Ruby） |
 | `npm run create-icons` | アイコンを生成 |
 
 ## ショートカット
@@ -99,8 +150,10 @@ opal-browser-repl/
 ## 技術詳細
 
 - Manifest V3対応
-- Opal 1.8.2使用
+- Opal 1.8.2使用（gem版ビルド）
 - opal-parserによるランタイムコンパイル
+- nativeモジュールでJSオブジェクトのRubyラッパー
+- IRBモードコンパイルでローカル変数を保持
 - chrome.devtools.inspectedWindow.eval APIでページコンテキスト実行
 
 ## ライセンス
