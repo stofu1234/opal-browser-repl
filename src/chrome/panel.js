@@ -48,6 +48,9 @@ class ChromeOpalPanel {
     // Load saved history
     this.loadHistory();
 
+    // Focus input
+    this.inputElement.focus();
+
     // Display welcome message
     this.repl.log('Opal REPL - Ruby in the browser', 'info');
     this.repl.log('Tip: Use backticks for inline JavaScript: `console.log("hello")`', 'info');
@@ -59,6 +62,33 @@ class ChromeOpalPanel {
     if (!available) {
       // Try to inject Opal
       await this.injectOpal();
+    } else {
+      // Opal exists, but check if native module is available
+      await this.ensureNativeModule();
+    }
+  }
+
+  async ensureNativeModule() {
+    try {
+      const hasNative = await this.evalInPage('typeof Opal.Native !== "undefined"');
+      if (!hasNative) {
+        this.repl.log('Loading native module...', 'info');
+        const nativeUrl = chrome.runtime.getURL('lib/native.js');
+        await this.evalInPage(`
+          (function() {
+            return new Promise((resolve, reject) => {
+              var script = document.createElement('script');
+              script.src = '${nativeUrl}';
+              script.onload = function() { resolve('loaded'); };
+              script.onerror = function() { reject(new Error('Failed to load native')); };
+              document.head.appendChild(script);
+            });
+          })()
+        `);
+        this.repl.log('Native module loaded. You can now use Native() wrapper.', 'info');
+      }
+    } catch (error) {
+      this.repl.log(`Note: Could not load native module: ${error.message}`, 'warning');
     }
   }
 
@@ -67,8 +97,9 @@ class ChromeOpalPanel {
 
     try {
       // Get the extension URL for lib files
-      const opalUrl = chrome.runtime.getURL('lib/opal.min.js');
-      const parserUrl = chrome.runtime.getURL('lib/opal-parser.min.js');
+      const opalUrl = chrome.runtime.getURL('lib/opal.js');
+      const parserUrl = chrome.runtime.getURL('lib/opal-parser.js');
+      const nativeUrl = chrome.runtime.getURL('lib/native.js');
 
       // Inject Opal runtime via script tag
       const injectScript = `
@@ -79,23 +110,21 @@ class ChromeOpalPanel {
               return;
             }
 
-            var opalScript = document.createElement('script');
-            opalScript.src = '${opalUrl}';
-            opalScript.onload = function() {
-              var parserScript = document.createElement('script');
-              parserScript.src = '${parserUrl}';
-              parserScript.onload = function() {
-                resolve('loaded');
-              };
-              parserScript.onerror = function() {
-                reject(new Error('Failed to load opal-parser'));
-              };
-              document.head.appendChild(parserScript);
-            };
-            opalScript.onerror = function() {
-              reject(new Error('Failed to load opal'));
-            };
-            document.head.appendChild(opalScript);
+            function loadScript(url) {
+              return new Promise((res, rej) => {
+                var s = document.createElement('script');
+                s.src = url;
+                s.onload = function() { res(); };
+                s.onerror = function() { rej(new Error('Failed to load ' + url)); };
+                document.head.appendChild(s);
+              });
+            }
+
+            loadScript('${opalUrl}')
+              .then(function() { return loadScript('${parserUrl}'); })
+              .then(function() { return loadScript('${nativeUrl}'); })
+              .then(function() { resolve('loaded'); })
+              .catch(reject);
           });
         })()
       `;

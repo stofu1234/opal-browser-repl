@@ -173,7 +173,9 @@ export class OpalRepl {
             Opal.gvars.stderr = captureIO;
           }
 
-          var result = Opal.eval(${escapedCode});
+          // Compile with IRB mode to preserve local variables
+          var compiled = Opal.compile(${escapedCode}, {irb: true});
+          var result = eval(compiled);
 
           // Handle Opal nil
           var jsResult = null;
