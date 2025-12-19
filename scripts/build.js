@@ -125,9 +125,9 @@ function buildChrome() {
   const libDestDir = join(chromeDistDir, 'lib');
   if (existsSync(libSrcDir)) {
     copyDir(libSrcDir, libDestDir);
-    console.log('  Copied: lib/opal.min.js, lib/opal-parser.min.js');
+    console.log('  Copied: lib/opal.js, lib/opal-parser.js, lib/native.js');
   } else {
-    console.log('  Warning: lib/ not found. Run "npm run fetch-opal" first.');
+    console.log('  Warning: lib/ not found. Run "npm run build-opal" first.');
   }
 
   // Copy icons

@@ -12,9 +12,9 @@ chrome.devtools.panels.create(
 
     // Panel show/hide events
     panel.onShown.addListener((panelWindow) => {
-      // Panel is now visible
-      if (panelWindow.repl) {
-        panelWindow.repl.checkOpalAvailability();
+      // Panel is now visible - focus input
+      if (panelWindow.repl && panelWindow.repl.inputElement) {
+        panelWindow.repl.inputElement.focus();
       }
     });
 
