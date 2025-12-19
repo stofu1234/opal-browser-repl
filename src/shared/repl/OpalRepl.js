@@ -1,33 +1,79 @@
 /**
  * OpalRepl - Core REPL functionality for Opal Ruby
- * This is the shared core that works across different browsers
+ * IRB/Pry style inline input interface
  */
 export class OpalRepl {
   constructor(options = {}) {
     this.history = [];
     this.historyIndex = -1;
-    this.outputElement = options.outputElement;
-    this.inputElement = options.inputElement;
+    this.consoleElement = options.consoleElement;
     this.evalFunction = options.evalFunction;
     this.onReady = options.onReady || (() => {});
     this.opalAvailable = false;
-
-    if (this.inputElement) {
-      this.setupEventListeners();
-    }
+    this.currentInputLine = null;
+    this.currentInputField = null;
   }
 
-  setupEventListeners() {
-    this.inputElement.addEventListener('keydown', (e) => {
+  /**
+   * Create a new input prompt line
+   */
+  createPrompt() {
+    // Create input line container
+    const inputLine = document.createElement('div');
+    inputLine.className = 'repl-input-line';
+
+    // Create prompt
+    const prompt = document.createElement('span');
+    prompt.className = 'repl-prompt';
+    prompt.textContent = '>>';
+
+    // Create input field (textarea for multi-line support)
+    const inputField = document.createElement('textarea');
+    inputField.className = 'repl-input-field';
+    inputField.rows = 1;
+    inputField.spellcheck = false;
+    inputField.placeholder = 'Enter Ruby code...';
+
+    inputLine.appendChild(prompt);
+    inputLine.appendChild(inputField);
+    this.consoleElement.appendChild(inputLine);
+
+    // Store references
+    this.currentInputLine = inputLine;
+    this.currentInputField = inputField;
+
+    // Setup event listeners
+    this.setupInputListeners(inputField);
+
+    // Focus and scroll
+    inputField.focus();
+    this.scrollToBottom();
+
+    return inputField;
+  }
+
+  setupInputListeners(inputField) {
+    // Auto-resize textarea
+    const autoResize = () => {
+      inputField.style.height = 'auto';
+      inputField.style.height = inputField.scrollHeight + 'px';
+    };
+
+    inputField.addEventListener('input', autoResize);
+
+    inputField.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.execute();
-      } else if (e.key === 'ArrowUp' && this.inputElement.selectionStart === 0) {
+      } else if (e.key === 'ArrowUp' && inputField.selectionStart === 0) {
         e.preventDefault();
         this.navigateHistory(-1);
       } else if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        this.navigateHistory(1);
+        const atEnd = inputField.selectionStart === inputField.value.length;
+        if (atEnd || !inputField.value.includes('\n')) {
+          e.preventDefault();
+          this.navigateHistory(1);
+        }
       } else if (e.key === 'Tab') {
         e.preventDefault();
         this.insertTab();
@@ -36,11 +82,13 @@ export class OpalRepl {
   }
 
   insertTab() {
-    const start = this.inputElement.selectionStart;
-    const end = this.inputElement.selectionEnd;
-    const value = this.inputElement.value;
-    this.inputElement.value = value.substring(0, start) + '  ' + value.substring(end);
-    this.inputElement.selectionStart = this.inputElement.selectionEnd = start + 2;
+    if (!this.currentInputField) return;
+    const input = this.currentInputField;
+    const start = input.selectionStart;
+    const end = input.selectionEnd;
+    const value = input.value;
+    input.value = value.substring(0, start) + '  ' + value.substring(end);
+    input.selectionStart = input.selectionEnd = start + 2;
   }
 
   async checkOpalAvailability() {
@@ -50,7 +98,6 @@ export class OpalRepl {
 
       if (result) {
         this.log('Opal detected on page. REPL ready.', 'info');
-        // Check if opal-parser is available
         const hasParser = await this.evalFunction('typeof Opal.compile === "function"');
         if (hasParser) {
           this.log('opal-parser available. Full Ruby support enabled.', 'info');
@@ -69,8 +116,10 @@ export class OpalRepl {
     }
   }
 
-  async execute(code = null) {
-    const inputCode = code || this.inputElement?.value?.trim();
+  async execute() {
+    if (!this.currentInputField) return;
+
+    const inputCode = this.currentInputField.value.trim();
     if (!inputCode) return;
 
     // Add to history
@@ -79,20 +128,14 @@ export class OpalRepl {
     }
     this.historyIndex = this.history.length;
 
-    // Display input
-    this.log(`>> ${inputCode}`, 'input');
-
-    // Clear input
-    if (this.inputElement) {
-      this.inputElement.value = '';
-    }
+    // Convert input line to executed (read-only) format
+    this.freezeCurrentInput(inputCode);
 
     try {
       const evalResult = await this.evalRuby(inputCode);
 
       // Display captured stdout output
       if (evalResult.output) {
-        // Remove trailing newline for cleaner display
         const outputText = evalResult.output.replace(/\n$/, '');
         if (outputText) {
           this.log(outputText, 'stdout');
@@ -102,23 +145,48 @@ export class OpalRepl {
       // Handle error
       if (evalResult.error) {
         this.log(evalResult.error, 'error');
-        return { success: false, error: evalResult.error };
+      } else {
+        // Display result
+        this.log(`=> ${this.inspect(evalResult.result)}`, 'output');
       }
-
-      // Display result
-      this.log(`=> ${this.inspect(evalResult.result)}`, 'output');
-      return { success: true, result: evalResult.result };
     } catch (error) {
       this.log(error.message || String(error), 'error');
-      return { success: false, error };
     }
+
+    // Create new prompt
+    this.createPrompt();
+  }
+
+  /**
+   * Convert current input line to read-only executed format
+   */
+  freezeCurrentInput(code) {
+    if (!this.currentInputLine) return;
+
+    // Create executed line element
+    const executedLine = document.createElement('div');
+    executedLine.className = 'repl-executed';
+
+    const prompt = document.createElement('span');
+    prompt.className = 'repl-prompt';
+    prompt.textContent = '>>';
+
+    const codeSpan = document.createElement('span');
+    codeSpan.className = 'repl-code';
+    codeSpan.textContent = code;
+
+    executedLine.appendChild(prompt);
+    executedLine.appendChild(codeSpan);
+
+    // Replace input line with executed line
+    this.currentInputLine.replaceWith(executedLine);
+    this.currentInputLine = null;
+    this.currentInputField = null;
   }
 
   async evalRuby(code) {
-    // Escape the code for safe evaluation
     const escapedCode = JSON.stringify(code);
 
-    // Build the eval expression with stdout capture
     const evalExpr = `
       (function() {
         var output = [];
@@ -126,12 +194,10 @@ export class OpalRepl {
         var originalStderr = null;
 
         try {
-          // Setup stdout/stderr capture
           if (typeof Opal.gvars !== 'undefined') {
             originalStdout = Opal.gvars.stdout;
             originalStderr = Opal.gvars.stderr;
 
-            // Create a custom IO-like object to capture output
             var captureIO = {
               write: function(str) {
                 if (str && str !== Opal.nil) {
@@ -163,7 +229,6 @@ export class OpalRepl {
               flush: function() { return this; }
             };
 
-            // Also add Opal method aliases
             captureIO.$write = captureIO.write;
             captureIO.$puts = captureIO.puts;
             captureIO.$print = captureIO.print;
@@ -177,10 +242,8 @@ export class OpalRepl {
           var compiled = Opal.compile(${escapedCode}, {irb: true});
           var result = eval(compiled);
 
-          // Handle Opal nil
           var jsResult = null;
           if (result !== Opal.nil) {
-            // Convert Opal objects to JS where possible
             if (result && typeof result.$to_n === 'function') {
               jsResult = result.$to_n();
             } else {
@@ -198,7 +261,6 @@ export class OpalRepl {
             error: e.message || e.toString()
           };
         } finally {
-          // Restore original stdout/stderr
           if (originalStdout !== null) {
             Opal.gvars.stdout = originalStdout;
           }
@@ -212,9 +274,6 @@ export class OpalRepl {
     return await this.evalFunction(evalExpr);
   }
 
-  /**
-   * Inspect a value and return a Ruby-like string representation
-   */
   inspect(value) {
     if (value === null || value === undefined) {
       return 'nil';
@@ -234,14 +293,12 @@ export class OpalRepl {
     }
 
     if (typeof value === 'object') {
-      // Check if it's an Opal object
       if (value.$$class) {
         const className = value.$$class.$$name || 'Object';
         const id = value.$$id ? value.$$id.toString(16) : '????';
         return `#<${className}:0x${id}>`;
       }
 
-      // Check for Hash-like objects
       if (value.constructor && value.constructor.name === 'Object') {
         try {
           const pairs = Object.entries(value).map(([k, v]) => `${k}: ${this.inspect(v)}`);
@@ -262,7 +319,7 @@ export class OpalRepl {
   }
 
   log(message, type = 'output') {
-    if (!this.outputElement) {
+    if (!this.consoleElement) {
       console.log(`[${type}] ${message}`);
       return;
     }
@@ -270,15 +327,20 @@ export class OpalRepl {
     const line = document.createElement('div');
     line.className = `repl-line repl-${type}`;
 
-    // Handle multi-line messages
     if (message.includes('\n')) {
       line.innerHTML = message.split('\n').map(l => this.escapeHtml(l)).join('<br>');
     } else {
       line.textContent = message;
     }
 
-    this.outputElement.appendChild(line);
-    this.outputElement.scrollTop = this.outputElement.scrollHeight;
+    // Insert before current input line if exists, otherwise append
+    if (this.currentInputLine) {
+      this.consoleElement.insertBefore(line, this.currentInputLine);
+    } else {
+      this.consoleElement.appendChild(line);
+    }
+
+    this.scrollToBottom();
   }
 
   escapeHtml(text) {
@@ -287,25 +349,41 @@ export class OpalRepl {
     return div.innerHTML;
   }
 
+  scrollToBottom() {
+    this.consoleElement.scrollTop = this.consoleElement.scrollHeight;
+  }
+
   navigateHistory(direction) {
-    if (this.history.length === 0) return;
+    if (this.history.length === 0 || !this.currentInputField) return;
 
     const newIndex = this.historyIndex + direction;
 
     if (newIndex >= 0 && newIndex < this.history.length) {
       this.historyIndex = newIndex;
-      this.inputElement.value = this.history[newIndex];
+      this.currentInputField.value = this.history[newIndex];
+      // Trigger resize
+      this.currentInputField.dispatchEvent(new Event('input'));
     } else if (newIndex >= this.history.length) {
       this.historyIndex = this.history.length;
-      this.inputElement.value = '';
+      this.currentInputField.value = '';
+      this.currentInputField.dispatchEvent(new Event('input'));
     }
   }
 
   clear() {
-    if (this.outputElement) {
-      this.outputElement.innerHTML = '';
+    if (this.consoleElement) {
+      this.consoleElement.innerHTML = '';
     }
+    this.currentInputLine = null;
+    this.currentInputField = null;
     this.log('Console cleared', 'info');
+    this.createPrompt();
+  }
+
+  focus() {
+    if (this.currentInputField) {
+      this.currentInputField.focus();
+    }
   }
 
   getHistory() {

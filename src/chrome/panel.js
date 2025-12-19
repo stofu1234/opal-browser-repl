@@ -7,14 +7,12 @@ import { OpalRepl } from '../shared/repl/OpalRepl.js';
 
 class ChromeOpalPanel {
   constructor() {
-    this.outputElement = document.getElementById('output');
-    this.inputElement = document.getElementById('input');
+    this.consoleElement = document.getElementById('console');
     this.statusElement = document.getElementById('status');
     this.clearButton = document.getElementById('btn-clear');
 
     this.repl = new OpalRepl({
-      outputElement: this.outputElement,
-      inputElement: this.inputElement,
+      consoleElement: this.consoleElement,
       evalFunction: this.evalInPage.bind(this),
       onReady: this.onReplReady.bind(this)
     });
@@ -38,6 +36,14 @@ class ChromeOpalPanel {
       }
     });
 
+    // Click on console to focus input
+    this.consoleElement.addEventListener('click', (e) => {
+      // Only focus if clicking on empty area (not on text)
+      if (e.target === this.consoleElement) {
+        this.repl.focus();
+      }
+    });
+
     // Save history on unload
     window.addEventListener('beforeunload', () => {
       this.saveHistory();
@@ -47,9 +53,6 @@ class ChromeOpalPanel {
   async init() {
     // Load saved history
     this.loadHistory();
-
-    // Focus input
-    this.inputElement.focus();
 
     // Display welcome message
     this.repl.log('Opal REPL - Ruby in the browser', 'info');
@@ -66,6 +69,9 @@ class ChromeOpalPanel {
       // Opal exists, but check if native module is available
       await this.ensureNativeModule();
     }
+
+    // Create first prompt
+    this.repl.createPrompt();
   }
 
   async ensureNativeModule() {
