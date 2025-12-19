@@ -31,6 +31,14 @@ export class OpalRepl {
     'ls': {
       description: 'List methods and variables of current context',
       handler: (args) => this.cmdLs(args)
+    },
+    'cd': {
+      description: 'Change context (cd object / cd ..)',
+      handler: (args) => this.cmdCd(args)
+    },
+    'exit': {
+      description: 'Return to previous context (alias for cd ..)',
+      handler: () => this.cmdCd('..')
     }
   };
 
@@ -322,8 +330,15 @@ export class OpalRepl {
           var result;
           ${contextExpr ? `
           var context = ${contextExpr};
-          if (context && context.$instance_eval) {
-            result = context.$instance_eval(compiled);
+          if (context) {
+            // IRB mode uses Opal.top as 'self', so temporarily replace it
+            var originalTop = Opal.top;
+            try {
+              Opal.top = context;
+              result = eval(compiled);
+            } finally {
+              Opal.top = originalTop;
+            }
           } else {
             result = eval(compiled);
           }
@@ -338,9 +353,15 @@ export class OpalRepl {
 
           var jsResult = null;
           if (result !== Opal.nil) {
-            if (result && typeof result.$to_n === 'function') {
-              jsResult = result.$to_n();
-            } else {
+            // Try to convert to native JS, but fall back to raw result for custom objects
+            try {
+              if (result && typeof result.$to_n === 'function') {
+                jsResult = result.$to_n();
+              } else {
+                jsResult = result;
+              }
+            } catch(convErr) {
+              // $to_n failed (e.g., custom class), return raw object
               jsResult = result;
             }
           }
@@ -502,6 +523,10 @@ export class OpalRepl {
     this.log('  ls -m    - List methods only', 'info');
     this.log('  ls -v    - List variables only', 'info');
     this.log('  ls -c    - List constants only', 'info');
+    this.log('  cd obj   - Enter object context', 'info');
+    this.log('  cd ..    - Return to previous context', 'info');
+    this.log('  cd /     - Return to top level', 'info');
+    this.log('  exit     - Alias for cd ..', 'info');
     this.log('', 'info');
     this.log('Special variables:', 'info');
     this.log('  $_       - Last evaluation result', 'info');
@@ -537,8 +562,11 @@ export class OpalRepl {
     const showConstants = !args || args.includes('-c') || args === '';
     const targetArg = args.replace(/-[mvc]/g, '').trim();
 
+    // Check if we're in a context
+    const contextExpr = this.getContextExpression();
+    const inContext = this.contextStack.length > 0;
+
     // Build JavaScript code to get context information from Opal internals
-    // This accesses IRB variables and singleton methods directly
     const lsCode = `
       (function() {
         var result = {
@@ -554,6 +582,90 @@ export class OpalRepl {
                            '__methods__', '__ivars__', '__lvars__', '__consts__', 'target', 'result'];
 
         try {
+          ${inContext ? `
+          // We're inside a cd context - list methods/vars of the current object
+          var target = ${contextExpr};
+          if (!target) {
+            result.error = 'Context object not found';
+            return result;
+          }
+
+          // Get context name
+          if (target.$$class) {
+            result.context = '#<' + (target.$$class.$$name || 'Object') + '>';
+          } else if (target.$$is_class || target.$$is_module) {
+            result.context = target.$$name || 'Class';
+          } else {
+            result.context = Object.prototype.toString.call(target).slice(8, -1);
+          }
+
+          // Get user-defined methods only (not inherited from Object/Kernel/etc)
+          // For classes: get methods defined on the class itself
+          // For instances: get methods from the object's class (not superclasses)
+
+          if (target.$$is_class || target.$$is_module) {
+            // It's a class or module - show class methods
+            if (target.$$smethods) {
+              for (var i = 0; i < target.$$smethods.length; i++) {
+                var m = target.$$smethods[i];
+                if (typeof m === 'string' && !m.startsWith('_')) {
+                  result.methods.push(m);
+                }
+              }
+            }
+          } else if (target.$$class) {
+            // It's an instance - get methods defined on its class (not inherited)
+            var klass = target.$$class;
+
+            // Get own methods from the class prototype (not inherited)
+            if (klass.$$prototype) {
+              var protoKeys = Object.getOwnPropertyNames(klass.$$prototype);
+              for (var i = 0; i < protoKeys.length; i++) {
+                var key = protoKeys[i];
+                if (key.startsWith('$') && typeof klass.$$prototype[key] === 'function') {
+                  var methodName = key.substring(1);
+                  // Skip internal/standard methods (including $class, $module, etc)
+                  if (methodName.length > 0 &&
+                      !methodName.startsWith('_') &&
+                      !methodName.startsWith('$') &&
+                      methodName !== 'initialize' &&
+                      result.methods.indexOf(methodName) === -1) {
+                    result.methods.push(methodName);
+                  }
+                }
+              }
+            }
+
+            // Also check singleton methods on the instance
+            if (target.$$smethods) {
+              for (var i = 0; i < target.$$smethods.length; i++) {
+                var m = target.$$smethods[i];
+                if (typeof m === 'string' && !m.startsWith('_') && result.methods.indexOf(m) === -1) {
+                  result.methods.push(m);
+                }
+              }
+            }
+          }
+
+          // Get instance variables using Opal's method
+          if (typeof target.$instance_variables === 'function') {
+            var ivars = target.$instance_variables();
+            for (var i = 0; i < ivars.length; i++) {
+              var ivar = ivars[i];
+              var ivarStr = (typeof ivar.$to_s === 'function') ? ivar.$to_s() : String(ivar);
+              result.instance_variables.push(ivarStr);
+            }
+          }
+
+          // Get constants if it's a class/module
+          if (target.$$const) {
+            result.constants = Object.keys(target.$$const).sort();
+          }
+
+          ` : `
+          // Top level context (main)
+          result.context = 'main';
+
           // Get local variables from IRB vars (Opal stores them globally in IRB mode)
           if (typeof Opal.irb_vars !== 'undefined') {
             result.local_variables = Object.keys(Opal.irb_vars).filter(function(v) {
@@ -564,6 +676,12 @@ export class OpalRepl {
           // Use stored base methods (captured at REPL init from Opal.Object.$$prototype)
           var baseMethods = window.__opalReplBaseMethods__ || {};
 
+          // Known stdlib methods that are lazy-loaded (filter these out)
+          var stdlibMethods = {
+            'to_json': true, 'as_json': true, 'to_n': true,
+            'native_reader': true, 'native_writer': true, 'native_accessor': true
+          };
+
           // Check methods on Opal.Object.$$prototype that weren't there at init
           // (top-level def adds methods to Object.$$prototype)
           if (Opal.Object && Opal.Object.$$prototype) {
@@ -572,14 +690,14 @@ export class OpalRepl {
               var key = protoKeys[i];
               if (key.startsWith('$') && typeof Opal.Object.$$prototype[key] === 'function' && !baseMethods[key]) {
                 var methodName = key.substring(1);
-                if (methodName.length > 0 && !methodName.startsWith('_') && result.methods.indexOf(methodName) === -1) {
+                // Skip if it's a known stdlib method
+                if (methodName.length > 0 && !methodName.startsWith('_') &&
+                    !stdlibMethods[methodName] && result.methods.indexOf(methodName) === -1) {
                   result.methods.push(methodName);
                 }
               }
             }
           }
-
-          result.methods.sort();
 
           // Check constants on Opal.Object.$$const that weren't there at init
           var baseConstants = window.__opalReplBaseConstants__ || {};
@@ -607,7 +725,6 @@ export class OpalRepl {
               }
             }
           }
-          result.constants.sort();
 
           // Get instance variables from main (Opal.top)
           var main = Opal.top;
@@ -617,8 +734,12 @@ export class OpalRepl {
                 result.instance_variables.push(key);
               }
             }
-            result.instance_variables.sort();
           }
+          `}
+
+          result.methods.sort();
+          result.instance_variables.sort();
+          result.constants.sort();
 
         } catch(e) {
           result.error = e.message;
@@ -694,6 +815,8 @@ export class OpalRepl {
         return;
       }
       const popped = this.contextStack.pop();
+      // Pop from page context stack too
+      await this.evalFunction('window.__opalReplContextStack__.pop()');
       const newContext = this.contextStack.length > 0
         ? this.contextStack[this.contextStack.length - 1].name
         : 'main';
@@ -704,35 +827,62 @@ export class OpalRepl {
     if (target === '/') {
       // Go back to top level
       this.contextStack = [];
+      await this.evalFunction('window.__opalReplContextStack__ = []');
       this.log('Returned to: main (top level)', 'info');
       return;
     }
 
     // Change to new context
-    // First verify the target exists and get its description
-    const currentContext = this.getContextExpression();
-    const checkCode = `
+    // Evaluate the target expression and store the actual object in the page
+    const currentDepth = this.contextStack.length;
+    const cdCode = `
       (function() {
-        var context = ${currentContext || 'self'};
-        try {
-          var target = context.$instance_eval ?
-            context.$instance_eval(Opal.compile(${JSON.stringify(target)}, {irb: true})) :
-            eval(Opal.compile(${JSON.stringify(target)}, {irb: true}));
+        // Initialize context stack if needed
+        if (!window.__opalReplContextStack__) {
+          window.__opalReplContextStack__ = [];
+        }
 
-          if (target === undefined || target === null) {
+        try {
+          // Get current context (top of stack or Opal.top)
+          var currentContext = window.__opalReplContextStack__.length > 0
+            ? window.__opalReplContextStack__[window.__opalReplContextStack__.length - 1]
+            : Opal.top;
+
+          // Compile the target expression
+          var compiled = Opal.compile(${JSON.stringify(target)}, {irb: true});
+
+          // Evaluate in current context
+          var newContext;
+          if (currentContext && currentContext !== Opal.top && typeof currentContext.$instance_eval === 'function') {
+            // Use instance_eval to evaluate in the current context
+            newContext = currentContext.$instance_eval(Opal.$r(Opal.Opal).$arity_lambda(function() {
+              return eval(compiled);
+            }, 0, 0));
+          } else {
+            // Top level - just eval directly
+            newContext = eval(compiled);
+          }
+
+          if (newContext === undefined || newContext === null || newContext === Opal.nil) {
             return { error: 'Target is nil or undefined' };
           }
 
+          // Push to context stack
+          window.__opalReplContextStack__.push(newContext);
+
+          // Get display name
           var name = '';
-          if (target.$$class) {
-            name = '#<' + (target.$$class.$$name || 'Object') + '>';
-          } else if (typeof target === 'function' && target.$$name) {
-            name = target.$$name;
+          if (newContext.$$class) {
+            name = '#<' + (newContext.$$class.$$name || 'Object') + '>';
+          } else if (typeof newContext === 'function' && newContext.$$name) {
+            name = newContext.$$name;
+          } else if (newContext.$$is_class || newContext.$$is_module) {
+            name = newContext.$$name || 'Class';
           } else {
-            name = typeof target;
+            name = Object.prototype.toString.call(newContext).slice(8, -1);
           }
 
-          return { success: true, name: name, expr: ${JSON.stringify(target)} };
+          return { success: true, name: name };
         } catch(e) {
           return { error: e.message };
         }
@@ -740,14 +890,14 @@ export class OpalRepl {
     `;
 
     try {
-      const result = await this.evalFunction(checkCode);
+      const result = await this.evalFunction(cdCode);
 
       if (result.error) {
         this.log(`Cannot cd to '${target}': ${result.error}`, 'error');
         return;
       }
 
-      // Store context with both the Ruby expression and a name for display
+      // Store context info locally (the actual object is in page context)
       this.contextStack.push({
         expr: target,
         name: result.name
@@ -761,18 +911,15 @@ export class OpalRepl {
 
   /**
    * Get the current context expression for eval
+   * Returns a JS expression that references the stored context object
    */
   getContextExpression() {
     if (this.contextStack.length === 0) {
       return null;
     }
 
-    // Build nested instance_eval expression
-    let expr = 'self';
-    for (const ctx of this.contextStack) {
-      expr = `(${expr}).$instance_eval(Opal.compile(${JSON.stringify(ctx.expr)}, {irb: true}))`;
-    }
-    return expr;
+    // Return reference to the top of the context stack stored in page
+    return `window.__opalReplContextStack__[window.__opalReplContextStack__.length - 1]`;
   }
 
   /**
