@@ -12,7 +12,31 @@ export class OpalRepl {
     this.opalAvailable = false;
     this.currentInputLine = null;
     this.currentInputField = null;
+    // Context stack for cd command (stores JS expressions to reach each context)
+    this.contextStack = [];
   }
+
+  /**
+   * REPL Commands (Pry-like)
+   */
+  replCommands = {
+    'help': {
+      description: 'Show available commands',
+      handler: () => this.cmdHelp()
+    },
+    'history': {
+      description: 'Show command history',
+      handler: () => this.cmdHistory()
+    },
+    'ls': {
+      description: 'List methods and variables of current context',
+      handler: (args) => this.cmdLs(args)
+    },
+    'cd': {
+      description: 'Change context (cd object / cd ..)',
+      handler: (args) => this.cmdCd(args)
+    }
+  };
 
   /**
    * Create a new input prompt line
@@ -25,7 +49,7 @@ export class OpalRepl {
     // Create prompt
     const prompt = document.createElement('span');
     prompt.className = 'repl-prompt';
-    prompt.textContent = '>>';
+    prompt.textContent = this.getPromptPrefix();
 
     // Create input field (textarea for multi-line support)
     const inputField = document.createElement('textarea');
@@ -131,6 +155,13 @@ export class OpalRepl {
     // Convert input line to executed (read-only) format
     this.freezeCurrentInput(inputCode);
 
+    // Check for REPL commands
+    const commandResult = await this.tryReplCommand(inputCode);
+    if (commandResult.handled) {
+      this.createPrompt();
+      return;
+    }
+
     try {
       const evalResult = await this.evalRuby(inputCode);
 
@@ -158,6 +189,22 @@ export class OpalRepl {
   }
 
   /**
+   * Try to execute input as a REPL command
+   */
+  async tryReplCommand(input) {
+    const parts = input.split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+    const args = parts.slice(1).join(' ');
+
+    if (this.replCommands[cmd]) {
+      await this.replCommands[cmd].handler(args);
+      return { handled: true };
+    }
+
+    return { handled: false };
+  }
+
+  /**
    * Convert current input line to read-only executed format
    */
   freezeCurrentInput(code) {
@@ -169,7 +216,7 @@ export class OpalRepl {
 
     const prompt = document.createElement('span');
     prompt.className = 'repl-prompt';
-    prompt.textContent = '>>';
+    prompt.textContent = this.getPromptPrefix();
 
     const codeSpan = document.createElement('span');
     codeSpan.className = 'repl-code';
@@ -186,6 +233,7 @@ export class OpalRepl {
 
   async evalRuby(code) {
     const escapedCode = JSON.stringify(code);
+    const contextExpr = this.getContextExpression();
 
     const evalExpr = `
       (function() {
@@ -240,7 +288,24 @@ export class OpalRepl {
 
           // Compile with IRB mode to preserve local variables
           var compiled = Opal.compile(${escapedCode}, {irb: true});
-          var result = eval(compiled);
+
+          // Execute in context if we're inside a cd
+          var result;
+          ${contextExpr ? `
+          var context = ${contextExpr};
+          if (context && context.$instance_eval) {
+            result = context.$instance_eval(compiled);
+          } else {
+            result = eval(compiled);
+          }
+          ` : `
+          result = eval(compiled);
+          `}
+
+          // Store result as $_ (last result) for next evaluation
+          if (typeof Opal.gvars !== 'undefined') {
+            Opal.gvars['_'] = result;
+          }
 
           var jsResult = null;
           if (result !== Opal.nil) {
@@ -393,6 +458,255 @@ export class OpalRepl {
   setHistory(history) {
     this.history = Array.isArray(history) ? history : [];
     this.historyIndex = this.history.length;
+  }
+
+  // ==================== REPL Commands ====================
+
+  /**
+   * help - Show available commands
+   */
+  cmdHelp() {
+    this.log('Available commands:', 'info');
+    this.log('  help     - Show this help message', 'info');
+    this.log('  history  - Show command history', 'info');
+    this.log('  ls       - List methods/variables (ls, ls -m, ls -v, ls -c)', 'info');
+    this.log('  cd <obj> - Change context to object', 'info');
+    this.log('  cd ..    - Return to previous context', 'info');
+    this.log('', 'info');
+    this.log('Special variables:', 'info');
+    this.log('  $_       - Last evaluation result', 'info');
+    this.log('', 'info');
+    this.log('Tips:', 'info');
+    this.log('  Shift+Enter  - Multi-line input', 'info');
+    this.log('  Ctrl+L       - Clear console', 'info');
+    this.log('  Up/Down      - Navigate history', 'info');
+  }
+
+  /**
+   * history - Show command history
+   */
+  cmdHistory() {
+    if (this.history.length === 0) {
+      this.log('No history yet.', 'info');
+      return;
+    }
+
+    this.log('Command history:', 'info');
+    this.history.forEach((cmd, i) => {
+      const num = String(i + 1).padStart(3, ' ');
+      this.log(`${num}: ${cmd}`, 'stdout');
+    });
+  }
+
+  /**
+   * ls - List methods and variables of current context
+   */
+  async cmdLs(args) {
+    const showMethods = !args || args.includes('-m') || args === '';
+    const showVars = !args || args.includes('-v') || args === '';
+    const showConstants = !args || args.includes('-c') || args === '';
+    const targetArg = args.replace(/-[mvc]/g, '').trim();
+
+    const contextExpr = this.getContextExpression();
+    const lsCode = `
+      (function() {
+        var target = ${contextExpr || 'self'};
+        ${targetArg ? `target = ${targetArg};` : ''}
+
+        var result = { methods: [], instance_variables: [], constants: [], context: '' };
+
+        try {
+          // Get context description
+          if (target.$$class) {
+            result.context = target.$$class.$$name || 'Object';
+          } else if (typeof target === 'function' && target.$$name) {
+            result.context = target.$$name + ' (Class)';
+          } else {
+            result.context = typeof target;
+          }
+
+          // Get methods (own methods minus Object methods)
+          if (typeof target.$methods === 'function') {
+            var methods = target.$methods();
+            if (methods && methods.$$is_array) {
+              result.methods = methods.map(function(m) { return m.toString(); });
+            }
+          }
+
+          // Get instance variables
+          if (typeof target.$instance_variables === 'function') {
+            var ivars = target.$instance_variables();
+            if (ivars && ivars.$$is_array) {
+              result.instance_variables = ivars.map(function(v) { return v.toString(); });
+            }
+          }
+
+          // Get constants (if class/module)
+          if (target.$$is_class || target.$$is_module) {
+            var consts = target.$constants ? target.$constants() : [];
+            if (consts && consts.$$is_array) {
+              result.constants = consts.map(function(c) { return c.toString(); });
+            }
+          }
+        } catch(e) {
+          result.error = e.message;
+        }
+
+        return result;
+      })()
+    `;
+
+    try {
+      const result = await this.evalFunction(lsCode);
+
+      if (result.error) {
+        this.log(`Error: ${result.error}`, 'error');
+        return;
+      }
+
+      this.log(`Context: ${result.context}`, 'info');
+
+      if (showMethods && result.methods.length > 0) {
+        this.log('Methods:', 'info');
+        const methodList = result.methods.sort().join(', ');
+        this.log(`  ${methodList}`, 'stdout');
+      }
+
+      if (showVars && result.instance_variables.length > 0) {
+        this.log('Instance variables:', 'info');
+        const varList = result.instance_variables.sort().join(', ');
+        this.log(`  ${varList}`, 'stdout');
+      }
+
+      if (showConstants && result.constants.length > 0) {
+        this.log('Constants:', 'info');
+        const constList = result.constants.sort().join(', ');
+        this.log(`  ${constList}`, 'stdout');
+      }
+
+      if (result.methods.length === 0 && result.instance_variables.length === 0 && result.constants.length === 0) {
+        this.log('(no methods, variables, or constants found)', 'info');
+      }
+    } catch (error) {
+      this.log(`Error: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * cd - Change context
+   */
+  async cmdCd(args) {
+    if (!args || args.trim() === '') {
+      // Show current context
+      if (this.contextStack.length === 0) {
+        this.log('Context: main (top level)', 'info');
+      } else {
+        this.log(`Context: ${this.contextStack[this.contextStack.length - 1].name}`, 'info');
+        this.log(`Depth: ${this.contextStack.length}`, 'info');
+      }
+      return;
+    }
+
+    const target = args.trim();
+
+    if (target === '..') {
+      // Go back to previous context
+      if (this.contextStack.length === 0) {
+        this.log('Already at top level', 'warning');
+        return;
+      }
+      const popped = this.contextStack.pop();
+      const newContext = this.contextStack.length > 0
+        ? this.contextStack[this.contextStack.length - 1].name
+        : 'main';
+      this.log(`Returning to: ${newContext}`, 'info');
+      return;
+    }
+
+    if (target === '/') {
+      // Go back to top level
+      this.contextStack = [];
+      this.log('Returned to: main (top level)', 'info');
+      return;
+    }
+
+    // Change to new context
+    // First verify the target exists and get its description
+    const currentContext = this.getContextExpression();
+    const checkCode = `
+      (function() {
+        var context = ${currentContext || 'self'};
+        try {
+          var target = context.$instance_eval ?
+            context.$instance_eval(Opal.compile(${JSON.stringify(target)}, {irb: true})) :
+            eval(Opal.compile(${JSON.stringify(target)}, {irb: true}));
+
+          if (target === undefined || target === null) {
+            return { error: 'Target is nil or undefined' };
+          }
+
+          var name = '';
+          if (target.$$class) {
+            name = '#<' + (target.$$class.$$name || 'Object') + '>';
+          } else if (typeof target === 'function' && target.$$name) {
+            name = target.$$name;
+          } else {
+            name = typeof target;
+          }
+
+          return { success: true, name: name, expr: ${JSON.stringify(target)} };
+        } catch(e) {
+          return { error: e.message };
+        }
+      })()
+    `;
+
+    try {
+      const result = await this.evalFunction(checkCode);
+
+      if (result.error) {
+        this.log(`Cannot cd to '${target}': ${result.error}`, 'error');
+        return;
+      }
+
+      // Store context with both the Ruby expression and a name for display
+      this.contextStack.push({
+        expr: target,
+        name: result.name
+      });
+
+      this.log(`Entered: ${result.name}`, 'info');
+    } catch (error) {
+      this.log(`Error: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Get the current context expression for eval
+   */
+  getContextExpression() {
+    if (this.contextStack.length === 0) {
+      return null;
+    }
+
+    // Build nested instance_eval expression
+    let expr = 'self';
+    for (const ctx of this.contextStack) {
+      expr = `(${expr}).$instance_eval(Opal.compile(${JSON.stringify(ctx.expr)}, {irb: true}))`;
+    }
+    return expr;
+  }
+
+  /**
+   * Get the prompt prefix showing context depth
+   */
+  getPromptPrefix() {
+    if (this.contextStack.length === 0) {
+      return '>>';
+    }
+    const depth = this.contextStack.length;
+    const lastName = this.contextStack[this.contextStack.length - 1].name;
+    return `${lastName}:${depth}>>`;
   }
 }
 
