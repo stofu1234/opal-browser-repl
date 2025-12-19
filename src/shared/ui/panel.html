@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Opal REPL</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <div id="opal-repl">
+    <div id="toolbar">
+      <button id="btn-clear" title="Clear console (Ctrl+L)">Clear</button>
+      <span id="status" class="status-checking">Checking Opal...</span>
+    </div>
+    <div id="output"></div>
+    <div id="input-container">
+      <span class="prompt">ruby&gt;</span>
+      <textarea
+        id="input"
+        placeholder="Enter Ruby code... (Shift+Enter for newline)"
+        autofocus
+        spellcheck="false"
+      ></textarea>
+    </div>
+  </div>
+  <script type="module" src="panel.js"></script>
+</body>
+</html>
