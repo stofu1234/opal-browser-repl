@@ -13,8 +13,8 @@ chrome.devtools.panels.create(
     // Panel show/hide events
     panel.onShown.addListener((panelWindow) => {
       // Panel is now visible - focus input
-      if (panelWindow.repl && panelWindow.repl.inputElement) {
-        panelWindow.repl.inputElement.focus();
+      if (panelWindow.repl && panelWindow.repl.repl) {
+        panelWindow.repl.repl.focus();
       }
     });
 

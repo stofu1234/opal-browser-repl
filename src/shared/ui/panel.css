@@ -87,16 +87,17 @@ body {
   color: var(--text-error);
 }
 
-/* Output Area */
-#output {
+/* Console Area */
+#console {
   flex: 1;
   overflow-y: auto;
   padding: 8px;
   background-color: var(--bg-primary);
 }
 
+/* REPL Lines */
 .repl-line {
-  padding: 2px 0;
+  padding: 1px 0;
   white-space: pre-wrap;
   word-wrap: break-word;
   font-family: inherit;
@@ -128,47 +129,62 @@ body {
   color: var(--text-primary);
 }
 
-/* Input Area */
-#input-container {
+/* Inline Input Line */
+.repl-input-line {
   display: flex;
   align-items: flex-start;
-  padding: 8px;
-  background-color: var(--bg-secondary);
-  border-top: 1px solid var(--border-color);
+  padding: 1px 0;
 }
 
-.prompt {
+.repl-prompt {
   color: var(--prompt-color);
-  padding: 4px 8px 4px 0;
-  user-select: none;
   font-weight: bold;
+  user-select: none;
+  padding-right: 8px;
+  flex-shrink: 0;
 }
 
-#input {
+.repl-input-field {
   flex: 1;
-  min-height: 24px;
-  max-height: 200px;
-  padding: 4px;
-  background-color: var(--bg-input);
-  border: 1px solid var(--border-color);
-  border-radius: 3px;
+  background: transparent;
+  border: none;
+  outline: none;
   color: var(--text-input);
   font-family: inherit;
   font-size: inherit;
-  resize: vertical;
-  outline: none;
+  line-height: 1.4;
+  padding: 0;
+  margin: 0;
+  resize: none;
+  overflow: hidden;
+  min-height: 1.4em;
 }
 
-#input:focus {
-  border-color: var(--text-info);
-}
-
-#input::placeholder {
+.repl-input-field::placeholder {
   color: var(--text-secondary);
 }
 
-#input::selection {
+.repl-input-field::selection {
   background-color: var(--selection-bg);
+}
+
+/* Executed input (read-only) */
+.repl-executed {
+  display: flex;
+  align-items: flex-start;
+  padding: 1px 0;
+}
+
+.repl-executed .repl-prompt {
+  color: var(--prompt-color);
+  font-weight: bold;
+  padding-right: 8px;
+}
+
+.repl-executed .repl-code {
+  color: var(--text-input);
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 /* Scrollbar styling */
