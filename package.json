@@ -21,5 +21,8 @@
     "browser-extension"
   ],
   "license": "MIT",
-  "devDependencies": {}
+  "devDependencies": {
+    "jsdom": "^27.3.0",
+    "puppeteer": "^24.33.1"
+  }
 }

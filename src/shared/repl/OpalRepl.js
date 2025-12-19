@@ -12,7 +12,27 @@ export class OpalRepl {
     this.opalAvailable = false;
     this.currentInputLine = null;
     this.currentInputField = null;
+    // Context stack for cd command (stores JS expressions to reach each context)
+    this.contextStack = [];
   }
+
+  /**
+   * REPL Commands (Pry-like)
+   */
+  replCommands = {
+    'help': {
+      description: 'Show available commands',
+      handler: () => this.cmdHelp()
+    },
+    'history': {
+      description: 'Show command history',
+      handler: () => this.cmdHistory()
+    },
+    'ls': {
+      description: 'List methods and variables of current context',
+      handler: (args) => this.cmdLs(args)
+    }
+  };
 
   /**
    * Create a new input prompt line
@@ -25,7 +45,7 @@ export class OpalRepl {
     // Create prompt
     const prompt = document.createElement('span');
     prompt.className = 'repl-prompt';
-    prompt.textContent = '>>';
+    prompt.textContent = this.getPromptPrefix();
 
     // Create input field (textarea for multi-line support)
     const inputField = document.createElement('textarea');
@@ -104,6 +124,7 @@ export class OpalRepl {
         } else {
           this.log('Note: opal-parser not loaded. Some features may be limited.', 'warning');
         }
+
       } else {
         this.log('Opal not found on page. Injecting Opal runtime...', 'info');
       }
@@ -114,6 +135,38 @@ export class OpalRepl {
       this.log(`Error checking Opal: ${error.message}`, 'error');
       return false;
     }
+  }
+
+  /**
+   * Capture base methods and constants for ls command comparison
+   * Should be called after all Opal modules are fully loaded
+   */
+  async captureBaseState() {
+    const result = await this.evalFunction(`
+      (function() {
+        // Reset and recapture base state
+        window.__opalReplBaseMethods__ = {};
+        window.__opalReplBaseConstants__ = {};
+
+        // Capture methods from Opal.Object.$$prototype
+        if (Opal.Object && Opal.Object.$$prototype) {
+          var keys = Object.getOwnPropertyNames(Opal.Object.$$prototype);
+          for (var i = 0; i < keys.length; i++) {
+            var k = keys[i];
+            if (k.startsWith('$')) window.__opalReplBaseMethods__[k] = true;
+          }
+        }
+
+        // Capture constants from Opal.Object.$$const
+        if (Opal.Object && Opal.Object.$$const) {
+          var keys = Object.keys(Opal.Object.$$const);
+          for (var i = 0; i < keys.length; i++) {
+            window.__opalReplBaseConstants__[keys[i]] = true;
+          }
+        }
+
+      })()
+    `);
   }
 
   async execute() {
@@ -130,6 +183,13 @@ export class OpalRepl {
 
     // Convert input line to executed (read-only) format
     this.freezeCurrentInput(inputCode);
+
+    // Check for REPL commands
+    const commandResult = await this.tryReplCommand(inputCode);
+    if (commandResult.handled) {
+      this.createPrompt();
+      return;
+    }
 
     try {
       const evalResult = await this.evalRuby(inputCode);
@@ -158,6 +218,22 @@ export class OpalRepl {
   }
 
   /**
+   * Try to execute input as a REPL command
+   */
+  async tryReplCommand(input) {
+    const parts = input.split(/\s+/);
+    const cmd = parts[0].toLowerCase();
+    const args = parts.slice(1).join(' ');
+
+    if (this.replCommands[cmd]) {
+      await this.replCommands[cmd].handler(args);
+      return { handled: true };
+    }
+
+    return { handled: false };
+  }
+
+  /**
    * Convert current input line to read-only executed format
    */
   freezeCurrentInput(code) {
@@ -169,7 +245,7 @@ export class OpalRepl {
 
     const prompt = document.createElement('span');
     prompt.className = 'repl-prompt';
-    prompt.textContent = '>>';
+    prompt.textContent = this.getPromptPrefix();
 
     const codeSpan = document.createElement('span');
     codeSpan.className = 'repl-code';
@@ -186,6 +262,7 @@ export class OpalRepl {
 
   async evalRuby(code) {
     const escapedCode = JSON.stringify(code);
+    const contextExpr = this.getContextExpression();
 
     const evalExpr = `
       (function() {
@@ -240,7 +317,24 @@ export class OpalRepl {
 
           // Compile with IRB mode to preserve local variables
           var compiled = Opal.compile(${escapedCode}, {irb: true});
-          var result = eval(compiled);
+
+          // Execute in context if we're inside a cd
+          var result;
+          ${contextExpr ? `
+          var context = ${contextExpr};
+          if (context && context.$instance_eval) {
+            result = context.$instance_eval(compiled);
+          } else {
+            result = eval(compiled);
+          }
+          ` : `
+          result = eval(compiled);
+          `}
+
+          // Store result as $_ (last result) for next evaluation
+          if (typeof Opal.gvars !== 'undefined') {
+            Opal.gvars['_'] = result;
+          }
 
           var jsResult = null;
           if (result !== Opal.nil) {
@@ -393,6 +487,304 @@ export class OpalRepl {
   setHistory(history) {
     this.history = Array.isArray(history) ? history : [];
     this.historyIndex = this.history.length;
+  }
+
+  // ==================== REPL Commands ====================
+
+  /**
+   * help - Show available commands
+   */
+  cmdHelp() {
+    this.log('Available commands:', 'info');
+    this.log('  help     - Show this help message', 'info');
+    this.log('  history  - Show command history', 'info');
+    this.log('  ls       - List methods/variables/constants', 'info');
+    this.log('  ls -m    - List methods only', 'info');
+    this.log('  ls -v    - List variables only', 'info');
+    this.log('  ls -c    - List constants only', 'info');
+    this.log('', 'info');
+    this.log('Special variables:', 'info');
+    this.log('  $_       - Last evaluation result', 'info');
+    this.log('', 'info');
+    this.log('Tips:', 'info');
+    this.log('  Shift+Enter  - Multi-line input', 'info');
+    this.log('  Ctrl+L       - Clear console', 'info');
+    this.log('  Up/Down      - Navigate history', 'info');
+  }
+
+  /**
+   * history - Show command history
+   */
+  cmdHistory() {
+    if (this.history.length === 0) {
+      this.log('No history yet.', 'info');
+      return;
+    }
+
+    this.log('Command history:', 'info');
+    this.history.forEach((cmd, i) => {
+      const num = String(i + 1).padStart(3, ' ');
+      this.log(`${num}: ${cmd}`, 'stdout');
+    });
+  }
+
+  /**
+   * ls - List methods and variables of current context
+   */
+  async cmdLs(args) {
+    const showMethods = !args || args.includes('-m') || args === '';
+    const showVars = !args || args.includes('-v') || args === '';
+    const showConstants = !args || args.includes('-c') || args === '';
+    const targetArg = args.replace(/-[mvc]/g, '').trim();
+
+    // Build JavaScript code to get context information from Opal internals
+    // This accesses IRB variables and singleton methods directly
+    const lsCode = `
+      (function() {
+        var result = {
+          context: 'main',
+          methods: [],
+          instance_variables: [],
+          local_variables: [],
+          constants: []
+        };
+
+        // Internal variables to filter out
+        var internalVars = ['$ret_or_1', '$ret_or_2', '$ret_or_3', '__target__', '__ctx__',
+                           '__methods__', '__ivars__', '__lvars__', '__consts__', 'target', 'result'];
+
+        try {
+          // Get local variables from IRB vars (Opal stores them globally in IRB mode)
+          if (typeof Opal.irb_vars !== 'undefined') {
+            result.local_variables = Object.keys(Opal.irb_vars).filter(function(v) {
+              return internalVars.indexOf(v) === -1 && !v.startsWith('$ret_or_');
+            }).sort();
+          }
+
+          // Use stored base methods (captured at REPL init from Opal.Object.$$prototype)
+          var baseMethods = window.__opalReplBaseMethods__ || {};
+
+          // Check methods on Opal.Object.$$prototype that weren't there at init
+          // (top-level def adds methods to Object.$$prototype)
+          if (Opal.Object && Opal.Object.$$prototype) {
+            var protoKeys = Object.getOwnPropertyNames(Opal.Object.$$prototype);
+            for (var i = 0; i < protoKeys.length; i++) {
+              var key = protoKeys[i];
+              if (key.startsWith('$') && typeof Opal.Object.$$prototype[key] === 'function' && !baseMethods[key]) {
+                var methodName = key.substring(1);
+                if (methodName.length > 0 && !methodName.startsWith('_') && result.methods.indexOf(methodName) === -1) {
+                  result.methods.push(methodName);
+                }
+              }
+            }
+          }
+
+          result.methods.sort();
+
+          // Check constants on Opal.Object.$$const that weren't there at init
+          var baseConstants = window.__opalReplBaseConstants__ || {};
+
+          // Known stdlib/parser constants that are lazy-loaded (filter these out)
+          var stdlibConstants = {
+            'AST': true, 'Parser': true, 'Racc': true, 'ParseError': true,
+            'Set': true, 'Pathname': true, 'File': true, 'Struct': true,
+            'JSON': true, 'Date': true, 'Base64': true, 'PackUnpack': true,
+            'StringScanner': true, 'Strscan': true, 'ERB': true,
+            'OpenStruct': true, 'Delegator': true, 'SimpleDelegator': true,
+            'PP': true, 'PrettyPrint': true, 'Observable': true,
+            'Singleton': true, 'Forwardable': true, 'Logger': true,
+            'URI': true, 'CGI': true, 'SecureRandom': true, 'Digest': true,
+            'Native': true, 'Buffer': true, 'Console': true
+          };
+
+          if (Opal.Object && Opal.Object.$$const) {
+            var constKeys = Object.keys(Opal.Object.$$const);
+            for (var i = 0; i < constKeys.length; i++) {
+              var key = constKeys[i];
+              // Skip if it was in base, or if it's a known stdlib constant
+              if (!baseConstants[key] && !stdlibConstants[key]) {
+                result.constants.push(key);
+              }
+            }
+          }
+          result.constants.sort();
+
+          // Get instance variables from main (Opal.top)
+          var main = Opal.top;
+          if (main) {
+            for (var key in main) {
+              if (main.hasOwnProperty(key) && key.startsWith('@') && !key.startsWith('@@')) {
+                result.instance_variables.push(key);
+              }
+            }
+            result.instance_variables.sort();
+          }
+
+        } catch(e) {
+          result.error = e.message;
+        }
+
+        return result;
+      })()
+    `;
+
+    try {
+      const result = await this.evalFunction(lsCode);
+
+      if (result.error) {
+        this.log(`Error: ${result.error}`, 'error');
+        return;
+      }
+      this.log(`Context: ${result.context}`, 'info');
+
+      if (showMethods && result.methods && result.methods.length > 0) {
+        this.log('Methods:', 'info');
+        this.log(`  ${result.methods.join(', ')}`, 'stdout');
+      }
+
+      if (showVars && result.instance_variables && result.instance_variables.length > 0) {
+        this.log('Instance variables:', 'info');
+        this.log(`  ${result.instance_variables.join(', ')}`, 'stdout');
+      }
+
+      if (showVars && result.local_variables && result.local_variables.length > 0) {
+        this.log('Local variables:', 'info');
+        this.log(`  ${result.local_variables.join(', ')}`, 'stdout');
+      }
+
+      if (showConstants && result.constants && result.constants.length > 0) {
+        this.log('Constants:', 'info');
+        this.log(`  ${result.constants.join(', ')}`, 'stdout');
+      }
+
+      const hasContent = (result.methods?.length > 0) ||
+                        (result.instance_variables?.length > 0) ||
+                        (result.local_variables?.length > 0) ||
+                        (result.constants?.length > 0);
+
+      if (!hasContent) {
+        this.log('(no methods, variables, or constants found)', 'info');
+      }
+    } catch (error) {
+      this.log(`Error: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * cd - Change context
+   */
+  async cmdCd(args) {
+    if (!args || args.trim() === '') {
+      // Show current context
+      if (this.contextStack.length === 0) {
+        this.log('Context: main (top level)', 'info');
+      } else {
+        this.log(`Context: ${this.contextStack[this.contextStack.length - 1].name}`, 'info');
+        this.log(`Depth: ${this.contextStack.length}`, 'info');
+      }
+      return;
+    }
+
+    const target = args.trim();
+
+    if (target === '..') {
+      // Go back to previous context
+      if (this.contextStack.length === 0) {
+        this.log('Already at top level', 'warning');
+        return;
+      }
+      const popped = this.contextStack.pop();
+      const newContext = this.contextStack.length > 0
+        ? this.contextStack[this.contextStack.length - 1].name
+        : 'main';
+      this.log(`Returning to: ${newContext}`, 'info');
+      return;
+    }
+
+    if (target === '/') {
+      // Go back to top level
+      this.contextStack = [];
+      this.log('Returned to: main (top level)', 'info');
+      return;
+    }
+
+    // Change to new context
+    // First verify the target exists and get its description
+    const currentContext = this.getContextExpression();
+    const checkCode = `
+      (function() {
+        var context = ${currentContext || 'self'};
+        try {
+          var target = context.$instance_eval ?
+            context.$instance_eval(Opal.compile(${JSON.stringify(target)}, {irb: true})) :
+            eval(Opal.compile(${JSON.stringify(target)}, {irb: true}));
+
+          if (target === undefined || target === null) {
+            return { error: 'Target is nil or undefined' };
+          }
+
+          var name = '';
+          if (target.$$class) {
+            name = '#<' + (target.$$class.$$name || 'Object') + '>';
+          } else if (typeof target === 'function' && target.$$name) {
+            name = target.$$name;
+          } else {
+            name = typeof target;
+          }
+
+          return { success: true, name: name, expr: ${JSON.stringify(target)} };
+        } catch(e) {
+          return { error: e.message };
+        }
+      })()
+    `;
+
+    try {
+      const result = await this.evalFunction(checkCode);
+
+      if (result.error) {
+        this.log(`Cannot cd to '${target}': ${result.error}`, 'error');
+        return;
+      }
+
+      // Store context with both the Ruby expression and a name for display
+      this.contextStack.push({
+        expr: target,
+        name: result.name
+      });
+
+      this.log(`Entered: ${result.name}`, 'info');
+    } catch (error) {
+      this.log(`Error: ${error.message}`, 'error');
+    }
+  }
+
+  /**
+   * Get the current context expression for eval
+   */
+  getContextExpression() {
+    if (this.contextStack.length === 0) {
+      return null;
+    }
+
+    // Build nested instance_eval expression
+    let expr = 'self';
+    for (const ctx of this.contextStack) {
+      expr = `(${expr}).$instance_eval(Opal.compile(${JSON.stringify(ctx.expr)}, {irb: true}))`;
+    }
+    return expr;
+  }
+
+  /**
+   * Get the prompt prefix showing context depth
+   */
+  getPromptPrefix() {
+    if (this.contextStack.length === 0) {
+      return '>>';
+    }
+    const depth = this.contextStack.length;
+    const lastName = this.contextStack[this.contextStack.length - 1].name;
+    return `${lastName}:${depth}>>`;
   }
 }
 
