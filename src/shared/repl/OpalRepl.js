@@ -31,10 +31,6 @@ export class OpalRepl {
     'ls': {
       description: 'List methods and variables of current context',
       handler: (args) => this.cmdLs(args)
-    },
-    'cd': {
-      description: 'Change context (cd object / cd ..)',
-      handler: (args) => this.cmdCd(args)
     }
   };
 
@@ -128,6 +124,7 @@ export class OpalRepl {
         } else {
           this.log('Note: opal-parser not loaded. Some features may be limited.', 'warning');
         }
+
       } else {
         this.log('Opal not found on page. Injecting Opal runtime...', 'info');
       }
@@ -138,6 +135,38 @@ export class OpalRepl {
       this.log(`Error checking Opal: ${error.message}`, 'error');
       return false;
     }
+  }
+
+  /**
+   * Capture base methods and constants for ls command comparison
+   * Should be called after all Opal modules are fully loaded
+   */
+  async captureBaseState() {
+    const result = await this.evalFunction(`
+      (function() {
+        // Reset and recapture base state
+        window.__opalReplBaseMethods__ = {};
+        window.__opalReplBaseConstants__ = {};
+
+        // Capture methods from Opal.Object.$$prototype
+        if (Opal.Object && Opal.Object.$$prototype) {
+          var keys = Object.getOwnPropertyNames(Opal.Object.$$prototype);
+          for (var i = 0; i < keys.length; i++) {
+            var k = keys[i];
+            if (k.startsWith('$')) window.__opalReplBaseMethods__[k] = true;
+          }
+        }
+
+        // Capture constants from Opal.Object.$$const
+        if (Opal.Object && Opal.Object.$$const) {
+          var keys = Object.keys(Opal.Object.$$const);
+          for (var i = 0; i < keys.length; i++) {
+            window.__opalReplBaseConstants__[keys[i]] = true;
+          }
+        }
+
+      })()
+    `);
   }
 
   async execute() {
@@ -469,9 +498,10 @@ export class OpalRepl {
     this.log('Available commands:', 'info');
     this.log('  help     - Show this help message', 'info');
     this.log('  history  - Show command history', 'info');
-    this.log('  ls       - List methods/variables (ls, ls -m, ls -v, ls -c)', 'info');
-    this.log('  cd <obj> - Change context to object', 'info');
-    this.log('  cd ..    - Return to previous context', 'info');
+    this.log('  ls       - List methods/variables/constants', 'info');
+    this.log('  ls -m    - List methods only', 'info');
+    this.log('  ls -v    - List variables only', 'info');
+    this.log('  ls -c    - List constants only', 'info');
     this.log('', 'info');
     this.log('Special variables:', 'info');
     this.log('  $_       - Last evaluation result', 'info');
@@ -507,47 +537,89 @@ export class OpalRepl {
     const showConstants = !args || args.includes('-c') || args === '';
     const targetArg = args.replace(/-[mvc]/g, '').trim();
 
-    const contextExpr = this.getContextExpression();
+    // Build JavaScript code to get context information from Opal internals
+    // This accesses IRB variables and singleton methods directly
     const lsCode = `
       (function() {
-        var target = ${contextExpr || 'self'};
-        ${targetArg ? `target = ${targetArg};` : ''}
+        var result = {
+          context: 'main',
+          methods: [],
+          instance_variables: [],
+          local_variables: [],
+          constants: []
+        };
 
-        var result = { methods: [], instance_variables: [], constants: [], context: '' };
+        // Internal variables to filter out
+        var internalVars = ['$ret_or_1', '$ret_or_2', '$ret_or_3', '__target__', '__ctx__',
+                           '__methods__', '__ivars__', '__lvars__', '__consts__', 'target', 'result'];
 
         try {
-          // Get context description
-          if (target.$$class) {
-            result.context = target.$$class.$$name || 'Object';
-          } else if (typeof target === 'function' && target.$$name) {
-            result.context = target.$$name + ' (Class)';
-          } else {
-            result.context = typeof target;
+          // Get local variables from IRB vars (Opal stores them globally in IRB mode)
+          if (typeof Opal.irb_vars !== 'undefined') {
+            result.local_variables = Object.keys(Opal.irb_vars).filter(function(v) {
+              return internalVars.indexOf(v) === -1 && !v.startsWith('$ret_or_');
+            }).sort();
           }
 
-          // Get methods (own methods minus Object methods)
-          if (typeof target.$methods === 'function') {
-            var methods = target.$methods();
-            if (methods && methods.$$is_array) {
-              result.methods = methods.map(function(m) { return m.toString(); });
+          // Use stored base methods (captured at REPL init from Opal.Object.$$prototype)
+          var baseMethods = window.__opalReplBaseMethods__ || {};
+
+          // Check methods on Opal.Object.$$prototype that weren't there at init
+          // (top-level def adds methods to Object.$$prototype)
+          if (Opal.Object && Opal.Object.$$prototype) {
+            var protoKeys = Object.getOwnPropertyNames(Opal.Object.$$prototype);
+            for (var i = 0; i < protoKeys.length; i++) {
+              var key = protoKeys[i];
+              if (key.startsWith('$') && typeof Opal.Object.$$prototype[key] === 'function' && !baseMethods[key]) {
+                var methodName = key.substring(1);
+                if (methodName.length > 0 && !methodName.startsWith('_') && result.methods.indexOf(methodName) === -1) {
+                  result.methods.push(methodName);
+                }
+              }
             }
           }
 
-          // Get instance variables
-          if (typeof target.$instance_variables === 'function') {
-            var ivars = target.$instance_variables();
-            if (ivars && ivars.$$is_array) {
-              result.instance_variables = ivars.map(function(v) { return v.toString(); });
+          result.methods.sort();
+
+          // Check constants on Opal.Object.$$const that weren't there at init
+          var baseConstants = window.__opalReplBaseConstants__ || {};
+
+          // Known stdlib/parser constants that are lazy-loaded (filter these out)
+          var stdlibConstants = {
+            'AST': true, 'Parser': true, 'Racc': true, 'ParseError': true,
+            'Set': true, 'Pathname': true, 'File': true, 'Struct': true,
+            'JSON': true, 'Date': true, 'Base64': true, 'PackUnpack': true,
+            'StringScanner': true, 'Strscan': true, 'ERB': true,
+            'OpenStruct': true, 'Delegator': true, 'SimpleDelegator': true,
+            'PP': true, 'PrettyPrint': true, 'Observable': true,
+            'Singleton': true, 'Forwardable': true, 'Logger': true,
+            'URI': true, 'CGI': true, 'SecureRandom': true, 'Digest': true,
+            'Native': true, 'Buffer': true, 'Console': true
+          };
+
+          if (Opal.Object && Opal.Object.$$const) {
+            var constKeys = Object.keys(Opal.Object.$$const);
+            for (var i = 0; i < constKeys.length; i++) {
+              var key = constKeys[i];
+              // Skip if it was in base, or if it's a known stdlib constant
+              if (!baseConstants[key] && !stdlibConstants[key]) {
+                result.constants.push(key);
+              }
             }
+          }
+          result.constants.sort();
+
+          // Get instance variables from main (Opal.top)
+          var main = Opal.top;
+          if (main) {
+            for (var key in main) {
+              if (main.hasOwnProperty(key) && key.startsWith('@') && !key.startsWith('@@')) {
+                result.instance_variables.push(key);
+              }
+            }
+            result.instance_variables.sort();
           }
 
-          // Get constants (if class/module)
-          if (target.$$is_class || target.$$is_module) {
-            var consts = target.$constants ? target.$constants() : [];
-            if (consts && consts.$$is_array) {
-              result.constants = consts.map(function(c) { return c.toString(); });
-            }
-          }
         } catch(e) {
           result.error = e.message;
         }
@@ -563,28 +635,34 @@ export class OpalRepl {
         this.log(`Error: ${result.error}`, 'error');
         return;
       }
-
       this.log(`Context: ${result.context}`, 'info');
 
-      if (showMethods && result.methods.length > 0) {
+      if (showMethods && result.methods && result.methods.length > 0) {
         this.log('Methods:', 'info');
-        const methodList = result.methods.sort().join(', ');
-        this.log(`  ${methodList}`, 'stdout');
+        this.log(`  ${result.methods.join(', ')}`, 'stdout');
       }
 
-      if (showVars && result.instance_variables.length > 0) {
+      if (showVars && result.instance_variables && result.instance_variables.length > 0) {
         this.log('Instance variables:', 'info');
-        const varList = result.instance_variables.sort().join(', ');
-        this.log(`  ${varList}`, 'stdout');
+        this.log(`  ${result.instance_variables.join(', ')}`, 'stdout');
       }
 
-      if (showConstants && result.constants.length > 0) {
+      if (showVars && result.local_variables && result.local_variables.length > 0) {
+        this.log('Local variables:', 'info');
+        this.log(`  ${result.local_variables.join(', ')}`, 'stdout');
+      }
+
+      if (showConstants && result.constants && result.constants.length > 0) {
         this.log('Constants:', 'info');
-        const constList = result.constants.sort().join(', ');
-        this.log(`  ${constList}`, 'stdout');
+        this.log(`  ${result.constants.join(', ')}`, 'stdout');
       }
 
-      if (result.methods.length === 0 && result.instance_variables.length === 0 && result.constants.length === 0) {
+      const hasContent = (result.methods?.length > 0) ||
+                        (result.instance_variables?.length > 0) ||
+                        (result.local_variables?.length > 0) ||
+                        (result.constants?.length > 0);
+
+      if (!hasContent) {
         this.log('(no methods, variables, or constants found)', 'info');
       }
     } catch (error) {

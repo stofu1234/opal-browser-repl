@@ -70,6 +70,9 @@ class ChromeOpalPanel {
       await this.ensureNativeModule();
     }
 
+    // Capture base state for ls command (after all modules are loaded)
+    await this.repl.captureBaseState();
+
     // Create first prompt
     this.repl.createPrompt();
   }

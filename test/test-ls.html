@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Opal REPL - ls command test</title>
+  <script src="../dist/chrome/lib/opal.js"></script>
+  <script src="../dist/chrome/lib/opal-parser.js"></script>
+</head>
+<body>
+  <h1>Opal REPL - ls command test</h1>
+  <pre id="output"></pre>
+  <script>
+    const output = document.getElementById('output');
+    function log(msg) {
+      output.textContent += msg + '\n';
+      console.log(msg);
+    }
+
+    // Capture base methods at init
+    window.__opalReplBaseMethods__ = {};
+    if (Opal.top) {
+      var keys = Object.getOwnPropertyNames(Opal.top);
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        if (k.startsWith('$')) window.__opalReplBaseMethods__[k] = true;
+      }
+    }
+    log('Base methods captured: ' + Object.keys(window.__opalReplBaseMethods__).length);
+
+    // Define a method using Opal IRB mode
+    log('\n--- Defining method b ---');
+    var compiled = Opal.compile('def b; 4; end', {irb: true});
+    log('Compiled: ' + compiled.substring(0, 100) + '...');
+    var result = eval(compiled);
+    log('Result: ' + result);
+
+    // Check where the method ended up
+    log('\n--- Checking method location ---');
+    log('typeof Opal.top.$b: ' + typeof Opal.top.$b);
+    log('typeof Opal.Object.$$prototype.$b: ' + typeof Opal.Object.$$prototype.$b);
+    log('$b in __opalReplBaseMethods__: ' + !!window.__opalReplBaseMethods__['$b']);
+
+    // List new methods
+    log('\n--- Checking for new methods ---');
+    var baseMethods = window.__opalReplBaseMethods__;
+    var main = Opal.top;
+    var newMethods = [];
+
+    if (main) {
+      var mainKeys = Object.getOwnPropertyNames(main);
+      log('Total keys on Opal.top: ' + mainKeys.length);
+      log('Keys starting with $: ' + mainKeys.filter(k => k.startsWith('$')).length);
+
+      for (var i = 0; i < mainKeys.length; i++) {
+        var key = mainKeys[i];
+        if (key.startsWith('$') && typeof main[key] === 'function' && !baseMethods[key]) {
+          newMethods.push(key);
+        }
+      }
+    }
+
+    log('New methods found: ' + JSON.stringify(newMethods));
+
+    // Also check prototype chain
+    log('\n--- Checking prototype ---');
+    var proto = Object.getPrototypeOf(main);
+    log('Prototype: ' + proto);
+    if (proto) {
+      var protoKeys = Object.getOwnPropertyNames(proto);
+      log('Prototype keys with $: ' + protoKeys.filter(k => k.startsWith('$')).slice(0, 5).join(', '));
+      log('$b on prototype: ' + (typeof proto.$b));
+    }
+  </script>
+</body>
+</html>
