@@ -120,6 +120,14 @@ function buildChrome() {
   // Bundle panel.js with shared modules
   bundlePanelJs(chromeSrcDir, chromeDistDir);
 
+  // Copy popup UI files
+  const popupDir = join(chromeDistDir, 'popup');
+  mkdirSync(popupDir, { recursive: true });
+  copyIfExists(join(sharedDir, 'ui', 'popup.html'), join(popupDir, 'popup.html'));
+  copyIfExists(join(sharedDir, 'ui', 'popup.css'), join(popupDir, 'popup.css'));
+  copyIfExists(join(sharedDir, 'ui', 'popup.js'), join(popupDir, 'popup.js'));
+  console.log('  Copied: popup/popup.html, popup.css, popup.js');
+
   // Copy Opal libraries
   const libSrcDir = join(sharedDir, 'lib');
   const libDestDir = join(chromeDistDir, 'lib');
@@ -177,6 +185,14 @@ function buildEdge() {
 
   // Bundle panel.js with shared modules (reuse Chrome's panel.js)
   bundlePanelJs(chromeSrcDir, edgeDistDir);
+
+  // Copy popup UI files
+  const popupDir = join(edgeDistDir, 'popup');
+  mkdirSync(popupDir, { recursive: true });
+  copyIfExists(join(sharedDir, 'ui', 'popup.html'), join(popupDir, 'popup.html'));
+  copyIfExists(join(sharedDir, 'ui', 'popup.css'), join(popupDir, 'popup.css'));
+  copyIfExists(join(sharedDir, 'ui', 'popup.js'), join(popupDir, 'popup.js'));
+  console.log('  Copied: popup/popup.html, popup.css, popup.js');
 
   // Copy Opal libraries
   const libSrcDir = join(sharedDir, 'lib');
@@ -238,6 +254,14 @@ function buildFirefox() {
 
   // Bundle Firefox-specific panel.js with shared modules
   bundlePanelJs(firefoxSrcDir, firefoxDistDir);
+
+  // Copy popup UI files
+  const popupDir = join(firefoxDistDir, 'popup');
+  mkdirSync(popupDir, { recursive: true });
+  copyIfExists(join(sharedDir, 'ui', 'popup.html'), join(popupDir, 'popup.html'));
+  copyIfExists(join(sharedDir, 'ui', 'popup.css'), join(popupDir, 'popup.css'));
+  copyIfExists(join(sharedDir, 'ui', 'popup.js'), join(popupDir, 'popup.js'));
+  console.log('  Copied: popup/popup.html, popup.css, popup.js');
 
   // Copy Opal libraries
   const libSrcDir = join(sharedDir, 'lib');

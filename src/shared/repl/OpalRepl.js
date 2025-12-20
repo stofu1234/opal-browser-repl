@@ -119,28 +119,38 @@ export class OpalRepl {
     input.selectionStart = input.selectionEnd = start + 2;
   }
 
-  async checkOpalAvailability() {
+  async checkOpalAvailability(silent = false) {
     try {
       const result = await this.evalFunction('typeof Opal !== "undefined" && typeof Opal.eval === "function"');
       this.opalAvailable = result;
 
-      if (result) {
-        this.log('Opal detected on page. REPL ready.', 'info');
-        const hasParser = await this.evalFunction('typeof Opal.compile === "function"');
-        if (hasParser) {
-          this.log('opal-parser available. Full Ruby support enabled.', 'info');
+      if (!silent) {
+        if (result) {
+          this.log('Opal detected on page. REPL ready.', 'info');
+          const hasParser = await this.evalFunction('typeof Opal.compile === "function"');
+          if (hasParser) {
+            this.log('opal-parser available. Full Ruby support enabled.', 'info');
+          } else {
+            this.log('Note: opal-parser not loaded. Some features may be limited.', 'warning');
+          }
         } else {
-          this.log('Note: opal-parser not loaded. Some features may be limited.', 'warning');
+          this.log('Opal not found on page. Injecting Opal runtime...', 'info');
         }
-
-      } else {
-        this.log('Opal not found on page. Injecting Opal runtime...', 'info');
       }
 
       this.onReady(this.opalAvailable);
       return result;
     } catch (error) {
-      this.log(`Error checking Opal: ${error.message}`, 'error');
+      if (!silent) {
+        // Check if this is a CSP error blocking eval
+        if (error.message && (error.message.includes('CSP') || error.message.includes('eval'))) {
+          this.log('This page blocks eval() via Content Security Policy.', 'error');
+          this.log('Opal requires eval() to execute Ruby code.', 'error');
+          this.log('Try using Opal REPL on a different page without strict CSP.', 'info');
+        } else {
+          this.log(`Error checking Opal: ${error.message}`, 'error');
+        }
+      }
       return false;
     }
   }
@@ -150,31 +160,38 @@ export class OpalRepl {
    * Should be called after all Opal modules are fully loaded
    */
   async captureBaseState() {
-    const result = await this.evalFunction(`
-      (function() {
-        // Reset and recapture base state
-        window.__opalReplBaseMethods__ = {};
-        window.__opalReplBaseConstants__ = {};
+    if (!this.opalAvailable) return;
 
-        // Capture methods from Opal.Object.$$prototype
-        if (Opal.Object && Opal.Object.$$prototype) {
-          var keys = Object.getOwnPropertyNames(Opal.Object.$$prototype);
-          for (var i = 0; i < keys.length; i++) {
-            var k = keys[i];
-            if (k.startsWith('$')) window.__opalReplBaseMethods__[k] = true;
+    try {
+      await this.evalFunction(`
+        (function() {
+          if (typeof Opal === 'undefined') return;
+
+          // Reset and recapture base state
+          window.__opalReplBaseMethods__ = {};
+          window.__opalReplBaseConstants__ = {};
+
+          // Capture methods from Opal.Object.$$prototype
+          if (Opal.Object && Opal.Object.$$prototype) {
+            var keys = Object.getOwnPropertyNames(Opal.Object.$$prototype);
+            for (var i = 0; i < keys.length; i++) {
+              var k = keys[i];
+              if (k.startsWith('$')) window.__opalReplBaseMethods__[k] = true;
+            }
           }
-        }
 
-        // Capture constants from Opal.Object.$$const
-        if (Opal.Object && Opal.Object.$$const) {
-          var keys = Object.keys(Opal.Object.$$const);
-          for (var i = 0; i < keys.length; i++) {
-            window.__opalReplBaseConstants__[keys[i]] = true;
+          // Capture constants from Opal.Object.$$const
+          if (Opal.Object && Opal.Object.$$const) {
+            var keys = Object.keys(Opal.Object.$$const);
+            for (var i = 0; i < keys.length; i++) {
+              window.__opalReplBaseConstants__[keys[i]] = true;
+            }
           }
-        }
-
-      })()
-    `);
+        })()
+      `);
+    } catch (e) {
+      // Ignore errors if Opal is not available
+    }
   }
 
   async execute() {
@@ -218,7 +235,16 @@ export class OpalRepl {
         this.log(`=> ${this.inspect(evalResult.result)}`, 'output');
       }
     } catch (error) {
-      this.log(error.message || String(error), 'error');
+      const errorMsg = error.message || String(error);
+      // Check if this is a CSP error blocking eval
+      if (errorMsg.includes('CSP') || errorMsg.includes('eval') ||
+          errorMsg.includes('Content Security Policy') || errorMsg.includes("'unsafe-eval'")) {
+        this.log('This page blocks eval() via Content Security Policy.', 'error');
+        this.log('Opal requires eval() to execute Ruby code.', 'error');
+        this.log('Try using Opal REPL on a different page without strict CSP.', 'info');
+      } else {
+        this.log(errorMsg, 'error');
+      }
     }
 
     // Create new prompt

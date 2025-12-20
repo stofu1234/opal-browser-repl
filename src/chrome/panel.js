@@ -5,11 +5,17 @@
 
 import { OpalRepl } from '../shared/repl/OpalRepl.js';
 
+const DEFAULT_SETTINGS = {
+  opalDetectionMode: false,
+  autoInjectOpal: true
+};
+
 class ChromeOpalPanel {
   constructor() {
     this.consoleElement = document.getElementById('console');
     this.statusElement = document.getElementById('status');
     this.clearButton = document.getElementById('btn-clear');
+    this.settings = { ...DEFAULT_SETTINGS };
 
     this.repl = new OpalRepl({
       consoleElement: this.consoleElement,
@@ -19,6 +25,30 @@ class ChromeOpalPanel {
 
     this.setupEventListeners();
     this.init();
+  }
+
+  /**
+   * Load settings from storage
+   */
+  async loadSettings() {
+    return new Promise((resolve) => {
+      try {
+        if (chrome.storage && chrome.storage.sync) {
+          chrome.storage.sync.get(DEFAULT_SETTINGS, (result) => {
+            this.settings = chrome.runtime.lastError
+              ? { ...DEFAULT_SETTINGS }
+              : { ...DEFAULT_SETTINGS, ...result };
+            resolve(this.settings);
+          });
+        } else {
+          this.settings = { ...DEFAULT_SETTINGS };
+          resolve(this.settings);
+        }
+      } catch (e) {
+        this.settings = { ...DEFAULT_SETTINGS };
+        resolve(this.settings);
+      }
+    });
   }
 
   setupEventListeners() {
@@ -51,6 +81,9 @@ class ChromeOpalPanel {
   }
 
   async init() {
+    // Load settings
+    await this.loadSettings();
+
     // Load saved history
     this.loadHistory();
 
@@ -63,8 +96,14 @@ class ChromeOpalPanel {
     const available = await this.repl.checkOpalAvailability();
 
     if (!available) {
-      // Try to inject Opal
-      await this.injectOpal();
+      if (this.settings.autoInjectOpal) {
+        // Try to inject Opal
+        await this.injectOpal();
+      } else {
+        this.setStatus('Opal not found', 'error');
+        this.repl.log('Opal not detected on page. Auto-injection is disabled in settings.', 'warning');
+        this.repl.log('Enable "Auto-inject Opal" in extension settings or add Opal to your page.', 'info');
+      }
     } else {
       // Opal exists, but check if native module is available
       await this.ensureNativeModule();
@@ -86,8 +125,36 @@ class ChromeOpalPanel {
         await this.evalInPage(`
           (function() {
             return new Promise((resolve, reject) => {
+              // Create Trusted Types policy if needed
+              var trustedPolicy = null;
+              if (typeof trustedTypes !== 'undefined' && trustedTypes.createPolicy) {
+                try {
+                  trustedPolicy = trustedTypes.createPolicy('opal-repl-native', {
+                    createScriptURL: function(url) { return url; }
+                  });
+                } catch (e) { }
+              }
+
               var script = document.createElement('script');
-              script.src = '${nativeUrl}';
+              try {
+                if (trustedPolicy) {
+                  script.src = trustedPolicy.createScriptURL('${nativeUrl}');
+                } else {
+                  script.src = '${nativeUrl}';
+                }
+              } catch (e) {
+                // Fallback: fetch and inline
+                fetch('${nativeUrl}')
+                  .then(function(r) { return r.text(); })
+                  .then(function(code) {
+                    var s = document.createElement('script');
+                    s.textContent = code;
+                    document.head.appendChild(s);
+                    resolve('loaded');
+                  })
+                  .catch(reject);
+                return;
+              }
               script.onload = function() { resolve('loaded'); };
               script.onerror = function() { reject(new Error('Failed to load native')); };
               document.head.appendChild(script);
@@ -110,7 +177,7 @@ class ChromeOpalPanel {
       const parserUrl = chrome.runtime.getURL('lib/opal-parser.js');
       const nativeUrl = chrome.runtime.getURL('lib/native.js');
 
-      // Inject Opal runtime via script tag
+      // Inject Opal runtime via script tag with Trusted Types support
       const injectScript = `
         (function() {
           return new Promise((resolve, reject) => {
@@ -119,12 +186,47 @@ class ChromeOpalPanel {
               return;
             }
 
+            // Create Trusted Types policy if needed
+            var trustedPolicy = null;
+            if (typeof trustedTypes !== 'undefined' && trustedTypes.createPolicy) {
+              try {
+                trustedPolicy = trustedTypes.createPolicy('opal-repl', {
+                  createScriptURL: function(url) { return url; }
+                });
+              } catch (e) {
+                // Policy might already exist or not be allowed
+                console.log('[Opal REPL] Could not create Trusted Types policy:', e);
+              }
+            }
+
             function loadScript(url) {
               return new Promise((res, rej) => {
                 var s = document.createElement('script');
-                s.src = url;
+                try {
+                  if (trustedPolicy) {
+                    s.src = trustedPolicy.createScriptURL(url);
+                  } else {
+                    s.src = url;
+                  }
+                } catch (e) {
+                  // Fallback: try using fetch + inline script
+                  console.log('[Opal REPL] Script tag blocked, trying fetch:', e);
+                  fetch(url)
+                    .then(function(r) { return r.text(); })
+                    .then(function(code) {
+                      var inlineScript = document.createElement('script');
+                      inlineScript.textContent = code;
+                      document.head.appendChild(inlineScript);
+                      res();
+                    })
+                    .catch(rej);
+                  return;
+                }
                 s.onload = function() { res(); };
-                s.onerror = function() { rej(new Error('Failed to load ' + url)); };
+                s.onerror = function(e) {
+                  console.error('[Opal REPL] Failed to load: ' + url, e);
+                  rej(new Error('Failed to load ' + url));
+                };
                 document.head.appendChild(s);
               });
             }
@@ -140,13 +242,18 @@ class ChromeOpalPanel {
 
       await this.evalInPage(injectScript);
 
-      // Verify injection
-      const available = await this.repl.checkOpalAvailability();
+      // Small delay to ensure scripts are fully initialized
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Verify injection (silent mode to avoid duplicate messages)
+      const available = await this.repl.checkOpalAvailability(true);
       if (available) {
+        this.repl.log('Opal injected successfully. REPL ready.', 'info');
         this.setStatus('Ready', 'ready');
       } else {
         this.setStatus('Injection failed', 'error');
         this.repl.log('Failed to inject Opal. Try refreshing the page.', 'error');
+        this.repl.log('Check browser console for details.', 'info');
       }
     } catch (error) {
       this.setStatus('Error', 'error');

@@ -5,8 +5,17 @@
   "description": "Ruby/Opal REPL for Firefox DevTools - Execute Ruby code directly in your browser",
   "devtools_page": "devtools.html",
   "permissions": [
-    "<all_urls>"
+    "<all_urls>",
+    "storage"
   ],
+  "browser_action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/opal-16.png",
+      "48": "icons/opal-48.png",
+      "128": "icons/opal-128.png"
+    }
+  },
   "icons": {
     "16": "icons/opal-16.png",
     "48": "icons/opal-48.png",
