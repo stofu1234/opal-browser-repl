@@ -153,31 +153,38 @@ export class OpalRepl {
    * Should be called after all Opal modules are fully loaded
    */
   async captureBaseState() {
-    const result = await this.evalFunction(`
-      (function() {
-        // Reset and recapture base state
-        window.__opalReplBaseMethods__ = {};
-        window.__opalReplBaseConstants__ = {};
+    if (!this.opalAvailable) return;
 
-        // Capture methods from Opal.Object.$$prototype
-        if (Opal.Object && Opal.Object.$$prototype) {
-          var keys = Object.getOwnPropertyNames(Opal.Object.$$prototype);
-          for (var i = 0; i < keys.length; i++) {
-            var k = keys[i];
-            if (k.startsWith('$')) window.__opalReplBaseMethods__[k] = true;
+    try {
+      await this.evalFunction(`
+        (function() {
+          if (typeof Opal === 'undefined') return;
+
+          // Reset and recapture base state
+          window.__opalReplBaseMethods__ = {};
+          window.__opalReplBaseConstants__ = {};
+
+          // Capture methods from Opal.Object.$$prototype
+          if (Opal.Object && Opal.Object.$$prototype) {
+            var keys = Object.getOwnPropertyNames(Opal.Object.$$prototype);
+            for (var i = 0; i < keys.length; i++) {
+              var k = keys[i];
+              if (k.startsWith('$')) window.__opalReplBaseMethods__[k] = true;
+            }
           }
-        }
 
-        // Capture constants from Opal.Object.$$const
-        if (Opal.Object && Opal.Object.$$const) {
-          var keys = Object.keys(Opal.Object.$$const);
-          for (var i = 0; i < keys.length; i++) {
-            window.__opalReplBaseConstants__[keys[i]] = true;
+          // Capture constants from Opal.Object.$$const
+          if (Opal.Object && Opal.Object.$$const) {
+            var keys = Object.keys(Opal.Object.$$const);
+            for (var i = 0; i < keys.length; i++) {
+              window.__opalReplBaseConstants__[keys[i]] = true;
+            }
           }
-        }
-
-      })()
-    `);
+        })()
+      `);
+    } catch (e) {
+      // Ignore errors if Opal is not available
+    }
   }
 
   async execute() {
