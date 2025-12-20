@@ -13,9 +13,24 @@ const DEFAULT_SETTINGS = {
  */
 function loadSettings() {
   return new Promise((resolve) => {
-    chrome.storage.sync.get(DEFAULT_SETTINGS, (result) => {
-      resolve({ ...DEFAULT_SETTINGS, ...result });
-    });
+    try {
+      if (chrome.storage && chrome.storage.sync) {
+        chrome.storage.sync.get(DEFAULT_SETTINGS, (result) => {
+          if (chrome.runtime.lastError) {
+            console.log('Opal REPL: Storage error, using defaults:', chrome.runtime.lastError);
+            resolve({ ...DEFAULT_SETTINGS });
+          } else {
+            resolve({ ...DEFAULT_SETTINGS, ...result });
+          }
+        });
+      } else {
+        console.log('Opal REPL: Storage API not available, using defaults');
+        resolve({ ...DEFAULT_SETTINGS });
+      }
+    } catch (e) {
+      console.log('Opal REPL: Error loading settings, using defaults:', e);
+      resolve({ ...DEFAULT_SETTINGS });
+    }
   });
 }
 

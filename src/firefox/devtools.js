@@ -13,11 +13,14 @@ const DEFAULT_SETTINGS = {
  */
 async function loadSettings() {
   try {
-    const result = await browser.storage.sync.get(DEFAULT_SETTINGS);
-    return { ...DEFAULT_SETTINGS, ...result };
+    if (browser.storage && browser.storage.sync) {
+      const result = await browser.storage.sync.get(DEFAULT_SETTINGS);
+      return { ...DEFAULT_SETTINGS, ...result };
+    }
   } catch (e) {
-    return { ...DEFAULT_SETTINGS };
+    console.log('Opal REPL: Storage error, using defaults:', e);
   }
+  return { ...DEFAULT_SETTINGS };
 }
 
 /**
@@ -25,11 +28,16 @@ async function loadSettings() {
  */
 async function checkOpalAvailable() {
   try {
-    const [result] = await browser.devtools.inspectedWindow.eval(
+    const result = await browser.devtools.inspectedWindow.eval(
       'typeof Opal !== "undefined"'
     );
+    // Firefox returns [result, exceptionInfo] or just result depending on version
+    if (Array.isArray(result)) {
+      return result[0] === true;
+    }
     return result === true;
   } catch (e) {
+    console.log('Opal REPL: Error checking Opal:', e);
     return false;
   }
 }

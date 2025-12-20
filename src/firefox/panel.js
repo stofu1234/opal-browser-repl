@@ -32,13 +32,16 @@ class FirefoxOpalPanel {
    */
   async loadSettings() {
     try {
-      const result = await browser.storage.sync.get(DEFAULT_SETTINGS);
-      this.settings = { ...DEFAULT_SETTINGS, ...result };
-      return this.settings;
+      if (browser.storage && browser.storage.sync) {
+        const result = await browser.storage.sync.get(DEFAULT_SETTINGS);
+        this.settings = { ...DEFAULT_SETTINGS, ...result };
+        return this.settings;
+      }
     } catch (e) {
-      this.settings = { ...DEFAULT_SETTINGS };
-      return this.settings;
+      console.log('Opal REPL: Error loading settings:', e);
     }
+    this.settings = { ...DEFAULT_SETTINGS };
+    return this.settings;
   }
 
   setupEventListeners() {
@@ -207,7 +210,15 @@ class FirefoxOpalPanel {
    * Firefox's browser.devtools.inspectedWindow.eval returns a Promise
    */
   evalInPage(code) {
-    return browser.devtools.inspectedWindow.eval(code).then(([result, exceptionInfo]) => {
+    return browser.devtools.inspectedWindow.eval(code).then((response) => {
+      // Firefox returns [result, exceptionInfo] as an array
+      let result, exceptionInfo;
+      if (Array.isArray(response)) {
+        [result, exceptionInfo] = response;
+      } else {
+        result = response;
+      }
+
       if (exceptionInfo) {
         if (exceptionInfo.isException) {
           throw new Error(exceptionInfo.value || 'Evaluation error');
@@ -218,6 +229,12 @@ class FirefoxOpalPanel {
         }
       }
       return result;
+    }).catch((error) => {
+      // Handle protocol errors gracefully
+      if (error.message && error.message.includes('protocol error')) {
+        throw new Error('Page not ready. Please refresh the page.');
+      }
+      throw error;
     });
   }
 

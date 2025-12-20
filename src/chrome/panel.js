@@ -32,10 +32,24 @@ class ChromeOpalPanel {
    */
   async loadSettings() {
     return new Promise((resolve) => {
-      chrome.storage.sync.get(DEFAULT_SETTINGS, (result) => {
-        this.settings = { ...DEFAULT_SETTINGS, ...result };
+      try {
+        if (chrome.storage && chrome.storage.sync) {
+          chrome.storage.sync.get(DEFAULT_SETTINGS, (result) => {
+            if (chrome.runtime.lastError) {
+              this.settings = { ...DEFAULT_SETTINGS };
+            } else {
+              this.settings = { ...DEFAULT_SETTINGS, ...result };
+            }
+            resolve(this.settings);
+          });
+        } else {
+          this.settings = { ...DEFAULT_SETTINGS };
+          resolve(this.settings);
+        }
+      } catch (e) {
+        this.settings = { ...DEFAULT_SETTINGS };
         resolve(this.settings);
-      });
+      }
     });
   }
 
