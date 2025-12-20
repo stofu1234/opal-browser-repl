@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Opal DevTools",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Ruby/Opal REPL for Chrome DevTools - Execute Ruby code directly in your browser",
   "devtools_page": "devtools.html",
   "permissions": [

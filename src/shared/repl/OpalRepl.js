@@ -142,13 +142,19 @@ export class OpalRepl {
       return result;
     } catch (error) {
       if (!silent) {
+        const msg = error.message || '';
+        // Check for special page errors (about:blank, chrome://, etc.)
+        if (msg.includes('Operation failed') || msg.includes('Cannot access')) {
+          this.log('This page does not support script execution.', 'error');
+          this.log('Try opening a regular web page (http:// or https://).', 'info');
         // Check if this is a CSP error blocking eval
-        if (error.message && (error.message.includes('CSP') || error.message.includes('eval'))) {
+        } else if (msg.includes('CSP') || msg.includes('eval') ||
+                   msg.includes('Content Security Policy') || msg.includes("'unsafe-eval'")) {
           this.log('This page blocks eval() via Content Security Policy.', 'error');
           this.log('Opal requires eval() to execute Ruby code.', 'error');
           this.log('Try using Opal REPL on a different page without strict CSP.', 'info');
         } else {
-          this.log(`Error checking Opal: ${error.message}`, 'error');
+          this.log(`Error checking Opal: ${msg}`, 'error');
         }
       }
       return false;
@@ -236,8 +242,12 @@ export class OpalRepl {
       }
     } catch (error) {
       const errorMsg = error.message || String(error);
+      // Check for special page errors (about:blank, chrome://, etc.)
+      if (errorMsg.includes('Operation failed') || errorMsg.includes('Cannot access')) {
+        this.log('This page does not support script execution.', 'error');
+        this.log('Try opening a regular web page (http:// or https://).', 'info');
       // Check if this is a CSP error blocking eval
-      if (errorMsg.includes('CSP') || errorMsg.includes('eval') ||
+      } else if (errorMsg.includes('CSP') || errorMsg.includes('eval') ||
           errorMsg.includes('Content Security Policy') || errorMsg.includes("'unsafe-eval'")) {
         this.log('This page blocks eval() via Content Security Policy.', 'error');
         this.log('Opal requires eval() to execute Ruby code.', 'error');
