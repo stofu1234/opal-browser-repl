@@ -118,8 +118,36 @@ class FirefoxOpalPanel {
         await this.evalInPage(`
           (function() {
             return new Promise((resolve, reject) => {
+              // Create Trusted Types policy if needed
+              var trustedPolicy = null;
+              if (typeof trustedTypes !== 'undefined' && trustedTypes.createPolicy) {
+                try {
+                  trustedPolicy = trustedTypes.createPolicy('opal-repl-native', {
+                    createScriptURL: function(url) { return url; }
+                  });
+                } catch (e) { }
+              }
+
               var script = document.createElement('script');
-              script.src = '${nativeUrl}';
+              try {
+                if (trustedPolicy) {
+                  script.src = trustedPolicy.createScriptURL('${nativeUrl}');
+                } else {
+                  script.src = '${nativeUrl}';
+                }
+              } catch (e) {
+                // Fallback: fetch and inline
+                fetch('${nativeUrl}')
+                  .then(function(r) { return r.text(); })
+                  .then(function(code) {
+                    var s = document.createElement('script');
+                    s.textContent = code;
+                    document.head.appendChild(s);
+                    resolve('loaded');
+                  })
+                  .catch(reject);
+                return;
+              }
               script.onload = function() { resolve('loaded'); };
               script.onerror = function() { reject(new Error('Failed to load native')); };
               document.head.appendChild(script);
@@ -142,7 +170,7 @@ class FirefoxOpalPanel {
       const parserUrl = browser.runtime.getURL('lib/opal-parser.js');
       const nativeUrl = browser.runtime.getURL('lib/native.js');
 
-      // Inject Opal runtime via script tag
+      // Inject Opal runtime via script tag with Trusted Types support
       const injectScript = `
         (function() {
           return new Promise((resolve, reject) => {
@@ -151,10 +179,42 @@ class FirefoxOpalPanel {
               return;
             }
 
+            // Create Trusted Types policy if needed
+            var trustedPolicy = null;
+            if (typeof trustedTypes !== 'undefined' && trustedTypes.createPolicy) {
+              try {
+                trustedPolicy = trustedTypes.createPolicy('opal-repl', {
+                  createScriptURL: function(url) { return url; }
+                });
+              } catch (e) {
+                // Policy might already exist or not be allowed
+                console.log('[Opal REPL] Could not create Trusted Types policy:', e);
+              }
+            }
+
             function loadScript(url) {
               return new Promise((res, rej) => {
                 var s = document.createElement('script');
-                s.src = url;
+                try {
+                  if (trustedPolicy) {
+                    s.src = trustedPolicy.createScriptURL(url);
+                  } else {
+                    s.src = url;
+                  }
+                } catch (e) {
+                  // Fallback: try using fetch + inline script
+                  console.log('[Opal REPL] Script tag blocked, trying fetch:', e);
+                  fetch(url)
+                    .then(function(r) { return r.text(); })
+                    .then(function(code) {
+                      var inlineScript = document.createElement('script');
+                      inlineScript.textContent = code;
+                      document.head.appendChild(inlineScript);
+                      res();
+                    })
+                    .catch(rej);
+                  return;
+                }
                 s.onload = function() { res(); };
                 s.onerror = function(e) {
                   console.error('[Opal REPL] Failed to load: ' + url, e);

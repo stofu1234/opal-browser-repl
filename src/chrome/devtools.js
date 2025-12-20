@@ -82,18 +82,23 @@ function createPanel() {
  * Initialize DevTools
  */
 async function init() {
+  console.log('Opal REPL: Initializing DevTools...');
   const settings = await loadSettings();
+  console.log('Opal REPL: Settings loaded:', settings);
 
   if (settings.opalDetectionMode) {
     // Only create panel if Opal is detected
+    console.log('Opal REPL: Detection mode enabled, checking for Opal...');
     const opalAvailable = await checkOpalAvailable();
     if (opalAvailable) {
+      console.log('Opal REPL: Opal detected, creating panel');
       createPanel();
     } else {
       console.log('Opal REPL: Opal not detected on page, panel not created (detection mode enabled)');
     }
   } else {
     // Always create panel
+    console.log('Opal REPL: Detection mode disabled, creating panel');
     createPanel();
   }
 }
