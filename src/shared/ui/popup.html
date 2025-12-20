@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Opal REPL Settings</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <h1>Opal REPL</h1>
+
+    <div class="setting-group">
+      <label class="setting">
+        <span class="setting-info">
+          <span class="setting-label">Opal Detection Mode</span>
+          <span class="setting-desc">Only show Opal tab when Opal is detected on the page</span>
+        </span>
+        <input type="checkbox" id="opalDetectionMode">
+        <span class="toggle"></span>
+      </label>
+    </div>
+
+    <div class="setting-group">
+      <label class="setting">
+        <span class="setting-info">
+          <span class="setting-label">Auto-inject Opal</span>
+          <span class="setting-desc">Automatically inject Opal if not found on the page</span>
+        </span>
+        <input type="checkbox" id="autoInjectOpal">
+        <span class="toggle"></span>
+      </label>
+    </div>
+
+    <div class="footer">
+      <span class="version">v0.1.6</span>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

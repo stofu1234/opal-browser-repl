@@ -5,11 +5,17 @@
 
 import { OpalRepl } from '../shared/repl/OpalRepl.js';
 
+const DEFAULT_SETTINGS = {
+  opalDetectionMode: false,
+  autoInjectOpal: true
+};
+
 class FirefoxOpalPanel {
   constructor() {
     this.consoleElement = document.getElementById('console');
     this.statusElement = document.getElementById('status');
     this.clearButton = document.getElementById('btn-clear');
+    this.settings = { ...DEFAULT_SETTINGS };
 
     this.repl = new OpalRepl({
       consoleElement: this.consoleElement,
@@ -19,6 +25,20 @@ class FirefoxOpalPanel {
 
     this.setupEventListeners();
     this.init();
+  }
+
+  /**
+   * Load settings from storage
+   */
+  async loadSettings() {
+    try {
+      const result = await browser.storage.sync.get(DEFAULT_SETTINGS);
+      this.settings = { ...DEFAULT_SETTINGS, ...result };
+      return this.settings;
+    } catch (e) {
+      this.settings = { ...DEFAULT_SETTINGS };
+      return this.settings;
+    }
   }
 
   setupEventListeners() {
@@ -51,6 +71,9 @@ class FirefoxOpalPanel {
   }
 
   async init() {
+    // Load settings
+    await this.loadSettings();
+
     // Load saved history
     this.loadHistory();
 
@@ -63,8 +86,14 @@ class FirefoxOpalPanel {
     const available = await this.repl.checkOpalAvailability();
 
     if (!available) {
-      // Try to inject Opal
-      await this.injectOpal();
+      if (this.settings.autoInjectOpal) {
+        // Try to inject Opal
+        await this.injectOpal();
+      } else {
+        this.setStatus('Opal not found', 'error');
+        this.repl.log('Opal not detected on page. Auto-injection is disabled in settings.', 'warning');
+        this.repl.log('Enable "Auto-inject Opal" in extension settings or add Opal to your page.', 'info');
+      }
     } else {
       // Opal exists, but check if native module is available
       await this.ensureNativeModule();

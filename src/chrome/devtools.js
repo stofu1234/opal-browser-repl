@@ -3,23 +3,85 @@
  * Creates the Opal REPL panel in Chrome DevTools
  */
 
-chrome.devtools.panels.create(
-  'Opal REPL',
-  'icons/opal-48.png',
-  'panel/panel.html',
-  (panel) => {
-    console.log('Opal REPL panel created');
+const DEFAULT_SETTINGS = {
+  opalDetectionMode: false,
+  autoInjectOpal: true
+};
 
-    // Panel show/hide events
-    panel.onShown.addListener((panelWindow) => {
-      // Panel is now visible - focus input
-      if (panelWindow.repl && panelWindow.repl.repl) {
-        panelWindow.repl.repl.focus();
+/**
+ * Load settings from storage
+ */
+function loadSettings() {
+  return new Promise((resolve) => {
+    chrome.storage.sync.get(DEFAULT_SETTINGS, (result) => {
+      resolve({ ...DEFAULT_SETTINGS, ...result });
+    });
+  });
+}
+
+/**
+ * Check if Opal is available on the inspected page
+ */
+function checkOpalAvailable() {
+  return new Promise((resolve) => {
+    chrome.devtools.inspectedWindow.eval(
+      'typeof Opal !== "undefined"',
+      (result, exceptionInfo) => {
+        if (exceptionInfo) {
+          resolve(false);
+        } else {
+          resolve(result === true);
+        }
       }
-    });
+    );
+  });
+}
 
-    panel.onHidden.addListener(() => {
-      // Panel is now hidden
-    });
+/**
+ * Create the Opal REPL panel
+ */
+function createPanel() {
+  chrome.devtools.panels.create(
+    'Opal REPL',
+    'icons/opal-48.png',
+    'panel/panel.html',
+    (panel) => {
+      console.log('Opal REPL panel created');
+
+      // Panel show/hide events
+      panel.onShown.addListener((panelWindow) => {
+        // Panel is now visible - focus input
+        if (panelWindow.repl && panelWindow.repl.repl) {
+          panelWindow.repl.repl.focus();
+        }
+      });
+
+      panel.onHidden.addListener(() => {
+        // Panel is now hidden
+      });
+    }
+  );
+}
+
+/**
+ * Initialize DevTools
+ */
+async function init() {
+  const settings = await loadSettings();
+
+  if (settings.opalDetectionMode) {
+    // Only create panel if Opal is detected
+    const opalAvailable = await checkOpalAvailable();
+    if (opalAvailable) {
+      createPanel();
+    } else {
+      console.log('Opal REPL: Opal not detected on page, panel not created (detection mode enabled)');
+    }
+  } else {
+    // Always create panel
+    createPanel();
   }
-);
+}
+
+// Initialize
+init();
