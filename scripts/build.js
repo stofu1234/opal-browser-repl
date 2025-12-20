@@ -143,11 +143,121 @@ function buildChrome() {
 }
 
 /**
- * Build for Firefox (placeholder for future)
+ * Build for Edge (Chromium-based, same as Chrome with different manifest)
+ */
+function buildEdge() {
+  console.log('Building Edge extension...');
+  const edgeDistDir = join(distDir, 'edge');
+
+  // Clean
+  if (existsSync(edgeDistDir)) {
+    rmSync(edgeDistDir, { recursive: true });
+  }
+  mkdirSync(edgeDistDir, { recursive: true });
+
+  const edgeSrcDir = join(srcDir, 'edge');
+  const chromeSrcDir = join(srcDir, 'chrome');
+  const sharedDir = join(srcDir, 'shared');
+
+  // Copy Edge-specific manifest.json
+  copyIfExists(join(edgeSrcDir, 'manifest.json'), join(edgeDistDir, 'manifest.json'));
+  console.log('  Copied: manifest.json');
+
+  // Copy devtools files (same as Chrome)
+  copyIfExists(join(chromeSrcDir, 'devtools.html'), join(edgeDistDir, 'devtools.html'));
+  copyIfExists(join(chromeSrcDir, 'devtools.js'), join(edgeDistDir, 'devtools.js'));
+  console.log('  Copied: devtools.html, devtools.js');
+
+  // Copy panel UI files
+  const panelDir = join(edgeDistDir, 'panel');
+  mkdirSync(panelDir, { recursive: true });
+  copyIfExists(join(sharedDir, 'ui', 'panel.html'), join(panelDir, 'panel.html'));
+  copyIfExists(join(sharedDir, 'ui', 'panel.css'), join(panelDir, 'panel.css'));
+  console.log('  Copied: panel/panel.html, panel/panel.css');
+
+  // Bundle panel.js with shared modules (reuse Chrome's panel.js)
+  bundlePanelJs(chromeSrcDir, edgeDistDir);
+
+  // Copy Opal libraries
+  const libSrcDir = join(sharedDir, 'lib');
+  const libDestDir = join(edgeDistDir, 'lib');
+  if (existsSync(libSrcDir)) {
+    copyDir(libSrcDir, libDestDir);
+    console.log('  Copied: lib/opal.js, lib/opal-parser.js, lib/native.js');
+  } else {
+    console.log('  Warning: lib/ not found. Run "npm run build-opal" first.');
+  }
+
+  // Copy icons
+  const iconsSrcDir = join(projectRoot, 'icons');
+  const iconsDestDir = join(edgeDistDir, 'icons');
+  if (existsSync(iconsSrcDir)) {
+    copyDir(iconsSrcDir, iconsDestDir);
+    console.log('  Copied: icons/');
+  }
+
+  console.log(`  Output: dist/edge/`);
+  console.log('');
+}
+
+/**
+ * Build for Firefox (Manifest V2)
  */
 function buildFirefox() {
   console.log('Building Firefox extension...');
-  console.log('  Firefox support not yet implemented.');
+  const firefoxDistDir = join(distDir, 'firefox');
+
+  // Clean
+  if (existsSync(firefoxDistDir)) {
+    rmSync(firefoxDistDir, { recursive: true });
+  }
+  mkdirSync(firefoxDistDir, { recursive: true });
+
+  const firefoxSrcDir = join(srcDir, 'firefox');
+  const sharedDir = join(srcDir, 'shared');
+
+  // Copy Firefox-specific manifest.json
+  copyIfExists(join(firefoxSrcDir, 'manifest.json'), join(firefoxDistDir, 'manifest.json'));
+  console.log('  Copied: manifest.json');
+
+  // Copy Firefox-specific devtools files
+  copyIfExists(join(firefoxSrcDir, 'devtools.html'), join(firefoxDistDir, 'devtools.html'));
+  // If Firefox has its own devtools.html, use it; otherwise use Chrome's
+  if (!existsSync(join(firefoxSrcDir, 'devtools.html'))) {
+    copyIfExists(join(srcDir, 'chrome', 'devtools.html'), join(firefoxDistDir, 'devtools.html'));
+  }
+  copyIfExists(join(firefoxSrcDir, 'devtools.js'), join(firefoxDistDir, 'devtools.js'));
+  console.log('  Copied: devtools.html, devtools.js');
+
+  // Copy panel UI files
+  const panelDir = join(firefoxDistDir, 'panel');
+  mkdirSync(panelDir, { recursive: true });
+  copyIfExists(join(sharedDir, 'ui', 'panel.html'), join(panelDir, 'panel.html'));
+  copyIfExists(join(sharedDir, 'ui', 'panel.css'), join(panelDir, 'panel.css'));
+  console.log('  Copied: panel/panel.html, panel/panel.css');
+
+  // Bundle Firefox-specific panel.js with shared modules
+  bundlePanelJs(firefoxSrcDir, firefoxDistDir);
+
+  // Copy Opal libraries
+  const libSrcDir = join(sharedDir, 'lib');
+  const libDestDir = join(firefoxDistDir, 'lib');
+  if (existsSync(libSrcDir)) {
+    copyDir(libSrcDir, libDestDir);
+    console.log('  Copied: lib/opal.js, lib/opal-parser.js, lib/native.js');
+  } else {
+    console.log('  Warning: lib/ not found. Run "npm run build-opal" first.');
+  }
+
+  // Copy icons
+  const iconsSrcDir = join(projectRoot, 'icons');
+  const iconsDestDir = join(firefoxDistDir, 'icons');
+  if (existsSync(iconsSrcDir)) {
+    copyDir(iconsSrcDir, iconsDestDir);
+    console.log('  Copied: icons/');
+  }
+
+  console.log(`  Output: dist/firefox/`);
   console.log('');
 }
 
@@ -161,6 +271,10 @@ function build() {
 
   if (target === 'all' || target === 'chrome') {
     buildChrome();
+  }
+
+  if (target === 'all' || target === 'edge') {
+    buildEdge();
   }
 
   if (target === 'all' || target === 'firefox') {
@@ -183,6 +297,7 @@ if (watchMode) {
   const watchDirs = [
     join(srcDir, 'shared'),
     join(srcDir, 'chrome'),
+    join(srcDir, 'edge'),
     join(srcDir, 'firefox')
   ];
 
