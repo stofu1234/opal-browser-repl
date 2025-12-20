@@ -142,7 +142,14 @@ export class OpalRepl {
       return result;
     } catch (error) {
       if (!silent) {
-        this.log(`Error checking Opal: ${error.message}`, 'error');
+        // Check if this is a CSP error blocking eval
+        if (error.message && (error.message.includes('CSP') || error.message.includes('eval'))) {
+          this.log('This page blocks eval() via Content Security Policy.', 'error');
+          this.log('Opal requires eval() to execute Ruby code.', 'error');
+          this.log('Try using Opal REPL on a different page without strict CSP.', 'info');
+        } else {
+          this.log(`Error checking Opal: ${error.message}`, 'error');
+        }
       }
       return false;
     }
@@ -228,7 +235,16 @@ export class OpalRepl {
         this.log(`=> ${this.inspect(evalResult.result)}`, 'output');
       }
     } catch (error) {
-      this.log(error.message || String(error), 'error');
+      const errorMsg = error.message || String(error);
+      // Check if this is a CSP error blocking eval
+      if (errorMsg.includes('CSP') || errorMsg.includes('eval') ||
+          errorMsg.includes('Content Security Policy') || errorMsg.includes("'unsafe-eval'")) {
+        this.log('This page blocks eval() via Content Security Policy.', 'error');
+        this.log('Opal requires eval() to execute Ruby code.', 'error');
+        this.log('Try using Opal REPL on a different page without strict CSP.', 'info');
+      } else {
+        this.log(errorMsg, 'error');
+      }
     }
 
     // Create new prompt

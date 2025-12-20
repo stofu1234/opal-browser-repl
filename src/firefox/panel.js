@@ -38,7 +38,7 @@ class FirefoxOpalPanel {
         return this.settings;
       }
     } catch (e) {
-      console.log('Opal REPL: Error loading settings:', e);
+      // Ignore storage errors, use defaults
     }
     this.settings = { ...DEFAULT_SETTINGS };
     return this.settings;

@@ -35,11 +35,9 @@ class ChromeOpalPanel {
       try {
         if (chrome.storage && chrome.storage.sync) {
           chrome.storage.sync.get(DEFAULT_SETTINGS, (result) => {
-            if (chrome.runtime.lastError) {
-              this.settings = { ...DEFAULT_SETTINGS };
-            } else {
-              this.settings = { ...DEFAULT_SETTINGS, ...result };
-            }
+            this.settings = chrome.runtime.lastError
+              ? { ...DEFAULT_SETTINGS }
+              : { ...DEFAULT_SETTINGS, ...result };
             resolve(this.settings);
           });
         } else {

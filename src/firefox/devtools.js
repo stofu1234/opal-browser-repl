@@ -18,7 +18,7 @@ async function loadSettings() {
       return { ...DEFAULT_SETTINGS, ...result };
     }
   } catch (e) {
-    console.log('Opal REPL: Storage error, using defaults:', e);
+    // Ignore storage errors, use defaults
   }
   return { ...DEFAULT_SETTINGS };
 }
@@ -37,7 +37,6 @@ async function checkOpalAvailable() {
     }
     return result === true;
   } catch (e) {
-    console.log('Opal REPL: Error checking Opal:', e);
     return false;
   }
 }

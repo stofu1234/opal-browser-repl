@@ -17,18 +17,15 @@ function loadSettings() {
       if (chrome.storage && chrome.storage.sync) {
         chrome.storage.sync.get(DEFAULT_SETTINGS, (result) => {
           if (chrome.runtime.lastError) {
-            console.log('Opal REPL: Storage error, using defaults:', chrome.runtime.lastError);
             resolve({ ...DEFAULT_SETTINGS });
           } else {
             resolve({ ...DEFAULT_SETTINGS, ...result });
           }
         });
       } else {
-        console.log('Opal REPL: Storage API not available, using defaults');
         resolve({ ...DEFAULT_SETTINGS });
       }
     } catch (e) {
-      console.log('Opal REPL: Error loading settings, using defaults:', e);
       resolve({ ...DEFAULT_SETTINGS });
     }
   });
@@ -82,23 +79,17 @@ function createPanel() {
  * Initialize DevTools
  */
 async function init() {
-  console.log('Opal REPL: Initializing DevTools...');
   const settings = await loadSettings();
-  console.log('Opal REPL: Settings loaded:', settings);
 
   if (settings.opalDetectionMode) {
     // Only create panel if Opal is detected
-    console.log('Opal REPL: Detection mode enabled, checking for Opal...');
     const opalAvailable = await checkOpalAvailable();
     if (opalAvailable) {
-      console.log('Opal REPL: Opal detected, creating panel');
       createPanel();
-    } else {
-      console.log('Opal REPL: Opal not detected on page, panel not created (detection mode enabled)');
     }
+    // If Opal not detected, panel not created (detection mode enabled)
   } else {
     // Always create panel
-    console.log('Opal REPL: Detection mode disabled, creating panel');
     createPanel();
   }
 }
