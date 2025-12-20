@@ -389,16 +389,34 @@ export class OpalRepl {
 
           var jsResult = null;
           if (result !== Opal.nil) {
-            // Try to convert to native JS, but fall back to raw result for custom objects
+            // Try to convert to a serializable format
             try {
-              if (result && typeof result.$to_n === 'function') {
+              // Handle class/module objects
+              if (result.$$is_class || result.$$is_module) {
+                jsResult = {
+                  __opal_class__: true,
+                  name: result.$$name || 'Class',
+                  type: result.$$is_module ? 'Module' : 'Class'
+                };
+              } else if (result && typeof result.$to_n === 'function') {
                 jsResult = result.$to_n();
+              } else if (result && result.$$class) {
+                // Opal instance - create serializable representation
+                jsResult = {
+                  __opal_instance__: true,
+                  class: result.$$class.$$name || 'Object',
+                  id: result.$$id
+                };
               } else {
                 jsResult = result;
               }
             } catch(convErr) {
-              // $to_n failed (e.g., custom class), return raw object
-              jsResult = result;
+              // Conversion failed, return string representation
+              try {
+                jsResult = { __opal_string__: result.$inspect ? result.$inspect() : String(result) };
+              } catch(e) {
+                jsResult = { __opal_string__: '[Object]' };
+              }
             }
           }
 
@@ -444,6 +462,22 @@ export class OpalRepl {
     }
 
     if (typeof value === 'object') {
+      // Handle our serialized Opal class/module
+      if (value.__opal_class__) {
+        return value.name;
+      }
+
+      // Handle our serialized Opal instance
+      if (value.__opal_instance__) {
+        const id = value.id ? value.id.toString(16) : '????';
+        return `#<${value.class}:0x${id}>`;
+      }
+
+      // Handle string representation
+      if (value.__opal_string__) {
+        return value.__opal_string__;
+      }
+
       if (value.$$class) {
         const className = value.$$class.$$name || 'Object';
         const id = value.$$id ? value.$$id.toString(16) : '????';
@@ -590,7 +624,7 @@ export class OpalRepl {
   }
 
   /**
-   * ls - List methods and variables of current context
+   * ls - List methods and variables of current context or specified object
    */
   async cmdLs(args) {
     const showMethods = !args || args.includes('-m') || args === '';
@@ -598,9 +632,21 @@ export class OpalRepl {
     const showConstants = !args || args.includes('-c') || args === '';
     const targetArg = args.replace(/-[mvc]/g, '').trim();
 
-    // Check if we're in a context
+    // Check if we're in a context or have a target argument
     const contextExpr = this.getContextExpression();
     const inContext = this.contextStack.length > 0;
+    const hasTarget = targetArg.length > 0 || inContext;
+
+    // If we have a target argument, compile it to get the target expression
+    let targetExpr = null;
+    if (targetArg) {
+      targetExpr = `(function() {
+        var compiled = Opal.compile(${JSON.stringify(targetArg)}, {irb: true});
+        return eval(compiled);
+      })()`;
+    } else if (inContext) {
+      targetExpr = contextExpr;
+    }
 
     // Build JavaScript code to get context information from Opal internals
     const lsCode = `
@@ -618,9 +664,9 @@ export class OpalRepl {
                            '__methods__', '__ivars__', '__lvars__', '__consts__', 'target', 'result'];
 
         try {
-          ${inContext ? `
-          // We're inside a cd context - list methods/vars of the current object
-          var target = ${contextExpr};
+          ${hasTarget ? `
+          // List methods/vars of the specified object or current context
+          var target = ${targetExpr};
           if (!target) {
             result.error = 'Context object not found';
             return result;
