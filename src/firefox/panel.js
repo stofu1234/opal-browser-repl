@@ -250,7 +250,13 @@ class FirefoxOpalPanel {
       }
     } catch (error) {
       this.setStatus('Error', 'error');
-      this.repl.log(`Error injecting Opal: ${error.message}`, 'error');
+      const msg = error.message || '';
+      if (msg.includes('Operation failed') || msg.includes('Cannot access')) {
+        this.repl.log('This page does not support script execution.', 'error');
+        this.repl.log('Try opening a regular web page (http:// or https://).', 'info');
+      } else {
+        this.repl.log(`Error injecting Opal: ${msg}`, 'error');
+      }
     }
   }
 
