@@ -119,28 +119,31 @@ export class OpalRepl {
     input.selectionStart = input.selectionEnd = start + 2;
   }
 
-  async checkOpalAvailability() {
+  async checkOpalAvailability(silent = false) {
     try {
       const result = await this.evalFunction('typeof Opal !== "undefined" && typeof Opal.eval === "function"');
       this.opalAvailable = result;
 
-      if (result) {
-        this.log('Opal detected on page. REPL ready.', 'info');
-        const hasParser = await this.evalFunction('typeof Opal.compile === "function"');
-        if (hasParser) {
-          this.log('opal-parser available. Full Ruby support enabled.', 'info');
+      if (!silent) {
+        if (result) {
+          this.log('Opal detected on page. REPL ready.', 'info');
+          const hasParser = await this.evalFunction('typeof Opal.compile === "function"');
+          if (hasParser) {
+            this.log('opal-parser available. Full Ruby support enabled.', 'info');
+          } else {
+            this.log('Note: opal-parser not loaded. Some features may be limited.', 'warning');
+          }
         } else {
-          this.log('Note: opal-parser not loaded. Some features may be limited.', 'warning');
+          this.log('Opal not found on page. Injecting Opal runtime...', 'info');
         }
-
-      } else {
-        this.log('Opal not found on page. Injecting Opal runtime...', 'info');
       }
 
       this.onReady(this.opalAvailable);
       return result;
     } catch (error) {
-      this.log(`Error checking Opal: ${error.message}`, 'error');
+      if (!silent) {
+        this.log(`Error checking Opal: ${error.message}`, 'error');
+      }
       return false;
     }
   }

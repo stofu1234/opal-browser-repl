@@ -151,7 +151,10 @@ class ChromeOpalPanel {
                 var s = document.createElement('script');
                 s.src = url;
                 s.onload = function() { res(); };
-                s.onerror = function() { rej(new Error('Failed to load ' + url)); };
+                s.onerror = function(e) {
+                  console.error('[Opal REPL] Failed to load: ' + url, e);
+                  rej(new Error('Failed to load ' + url));
+                };
                 document.head.appendChild(s);
               });
             }
@@ -167,13 +170,18 @@ class ChromeOpalPanel {
 
       await this.evalInPage(injectScript);
 
-      // Verify injection
-      const available = await this.repl.checkOpalAvailability();
+      // Small delay to ensure scripts are fully initialized
+      await new Promise(resolve => setTimeout(resolve, 100));
+
+      // Verify injection (silent mode to avoid duplicate messages)
+      const available = await this.repl.checkOpalAvailability(true);
       if (available) {
+        this.repl.log('Opal injected successfully. REPL ready.', 'info');
         this.setStatus('Ready', 'ready');
       } else {
         this.setStatus('Injection failed', 'error');
         this.repl.log('Failed to inject Opal. Try refreshing the page.', 'error');
+        this.repl.log('Check browser console for details.', 'info');
       }
     } catch (error) {
       this.setStatus('Error', 'error');
