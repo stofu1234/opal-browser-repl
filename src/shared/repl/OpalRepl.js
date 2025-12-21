@@ -627,9 +627,11 @@ export class OpalRepl {
    * ls - List methods and variables of current context or specified object
    */
   async cmdLs(args) {
-    const showMethods = !args || args.includes('-m') || args === '';
-    const showVars = !args || args.includes('-v') || args === '';
-    const showConstants = !args || args.includes('-c') || args === '';
+    // Check if specific flags are used - if not, show everything
+    const hasFlags = args && (args.includes('-m') || args.includes('-v') || args.includes('-c'));
+    const showMethods = !hasFlags || args.includes('-m');
+    const showVars = !hasFlags || args.includes('-v');
+    const showConstants = !hasFlags || args.includes('-c');
     const targetArg = args.replace(/-[mvc]/g, '').trim();
 
     // Check if we're in a context or have a target argument
@@ -695,8 +697,17 @@ export class OpalRepl {
                 if (classMethods && classMethods.length) {
                   for (var i = 0; i < classMethods.length; i++) {
                     var m = classMethods[i];
-                    var methodName = (typeof m.$to_s === 'function') ? m.$to_s() : String(m);
-                    if (methodName && !methodName.startsWith('_')) {
+                    // Convert Opal Symbol/String to native JS string
+                    var methodName;
+                    if (typeof m === 'string') {
+                      methodName = m;
+                    } else if (typeof m.$to_s === 'function') {
+                      var s = m.$to_s();
+                      methodName = (typeof s === 'string') ? s : String(s);
+                    } else {
+                      methodName = String(m);
+                    }
+                    if (methodName && methodName.charAt(0) !== '_') {
                       result.methods.push('.' + methodName);  // Prefix with . for class method
                     }
                   }
@@ -711,9 +722,19 @@ export class OpalRepl {
                 if (instanceMethods && instanceMethods.length) {
                   for (var i = 0; i < instanceMethods.length; i++) {
                     var m = instanceMethods[i];
-                    var methodName = (typeof m.$to_s === 'function') ? m.$to_s() : String(m);
-                    if (methodName && !methodName.startsWith('_') && methodName !== 'initialize') {
-                      result.methods.push('#' + methodName);  // Prefix with # for instance method
+                    // Convert Opal Symbol/String to native JS string
+                    var methodName;
+                    if (typeof m === 'string') {
+                      methodName = m;
+                    } else if (typeof m.$to_s === 'function') {
+                      var s = m.$to_s();
+                      methodName = (typeof s === 'string') ? s : String(s);
+                    } else {
+                      methodName = String(m);
+                    }
+                    // Filter out internal methods and initialize
+                    if (methodName && methodName.charAt(0) !== '_' && methodName !== 'initialize') {
+                      result.methods.push('#' + methodName);
                     }
                   }
                 }
@@ -846,6 +867,12 @@ export class OpalRepl {
           result.methods.sort();
           result.instance_variables.sort();
           result.constants.sort();
+
+          // Convert to plain arrays for serialization
+          result.methods = Array.prototype.slice.call(result.methods);
+          result.instance_variables = Array.prototype.slice.call(result.instance_variables);
+          result.local_variables = Array.prototype.slice.call(result.local_variables);
+          result.constants = Array.prototype.slice.call(result.constants);
 
         } catch(e) {
           result.error = e.message;
