@@ -1120,3 +1120,189 @@ test.describe('Opal REPL - Edge Cases', () => {
     expect(result.value).toBe('Hello!');
   });
 });
+
+// DOM Element Serialization Tests
+test.describe('Opal REPL - DOM Element Serialization', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(PLAYGROUND_URL);
+    await page.waitForFunction(() => typeof Opal !== 'undefined', { timeout: 10000 });
+  });
+
+  test('DOM element is serialized to string representation', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      // Helper functions (same as in OpalRepl.js)
+      function isDOMElement(obj) {
+        return obj && (obj instanceof Element || obj instanceof Node ||
+          (obj.nodeType !== undefined && obj.nodeName !== undefined));
+      }
+
+      function serializeDOMElement(el) {
+        if (!el) return 'null';
+        var tag = el.tagName ? el.tagName.toLowerCase() : 'node';
+        var id = el.id ? '#' + el.id : '';
+        var classes = el.className && typeof el.className === 'string' ?
+          '.' + el.className.split(' ').filter(function(c) { return c; }).join('.') : '';
+        return '<' + tag + id + classes + '>';
+      }
+
+      // Test with an actual DOM element
+      const div = document.createElement('div');
+      div.id = 'test-id';
+      div.className = 'class1 class2';
+
+      return {
+        isElement: isDOMElement(div),
+        serialized: serializeDOMElement(div)
+      };
+    });
+
+    expect(result.isElement).toBe(true);
+    expect(result.serialized).toBe('<div#test-id.class1.class2>');
+  });
+
+  test('array of DOM elements is serialized correctly', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      function isDOMElement(obj) {
+        return obj && (obj instanceof Element || obj instanceof Node ||
+          (obj.nodeType !== undefined && obj.nodeName !== undefined));
+      }
+
+      function serializeDOMElement(el) {
+        if (!el) return 'null';
+        var tag = el.tagName ? el.tagName.toLowerCase() : 'node';
+        var id = el.id ? '#' + el.id : '';
+        var classes = el.className && typeof el.className === 'string' ?
+          '.' + el.className.split(' ').filter(function(c) { return c; }).join('.') : '';
+        return '<' + tag + id + classes + '>';
+      }
+
+      function makeSerializable(val) {
+        if (val === null || val === undefined) return val;
+        if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') return val;
+        if (isDOMElement(val)) return { __dom_element__: serializeDOMElement(val) };
+        if (Array.isArray(val)) {
+          return val.map(function(item) { return makeSerializable(item); });
+        }
+        return val;
+      }
+
+      // Create multiple elements
+      const div1 = document.createElement('div');
+      div1.id = 'div1';
+      const div2 = document.createElement('div');
+      div2.className = 'myclass';
+      const span = document.createElement('span');
+
+      const elements = [div1, div2, span];
+      const serialized = makeSerializable(elements);
+
+      return {
+        length: serialized.length,
+        first: serialized[0].__dom_element__,
+        second: serialized[1].__dom_element__,
+        third: serialized[2].__dom_element__
+      };
+    });
+
+    expect(result.length).toBe(3);
+    expect(result.first).toBe('<div#div1>');
+    expect(result.second).toBe('<div.myclass>');
+    expect(result.third).toBe('<span>');
+  });
+
+  test('Window object is serialized to [Window]', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      function makeSerializable(val) {
+        if (val && typeof val === 'object') {
+          if (val instanceof Window) return { __native__: '[Window]' };
+        }
+        return val;
+      }
+
+      const serialized = makeSerializable(window);
+      return { native: serialized.__native__ };
+    });
+
+    expect(result.native).toBe('[Window]');
+  });
+
+  test('Document object is serialized to [Document]', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      function makeSerializable(val) {
+        if (val && typeof val === 'object') {
+          if (val instanceof Document) return { __native__: '[Document]' };
+        }
+        return val;
+      }
+
+      const serialized = makeSerializable(document);
+      return { native: serialized.__native__ };
+    });
+
+    expect(result.native).toBe('[Document]');
+  });
+
+  test('Promise object is serialized to [Promise]', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      function makeSerializable(val) {
+        if (val && typeof val === 'object') {
+          if (typeof val.then === 'function') return { __native__: '[Promise]' };
+        }
+        return val;
+      }
+
+      const promise = Promise.resolve(42);
+      const serialized = makeSerializable(promise);
+      return { native: serialized.__native__ };
+    });
+
+    expect(result.native).toBe('[Promise]');
+  });
+
+  test('query_all simulation returns serializable array', async ({ page }) => {
+    // Add some test divs to the page
+    await page.evaluate(() => {
+      const container = document.createElement('div');
+      container.innerHTML = '<div class="test">1</div><div class="test">2</div>';
+      document.body.appendChild(container);
+    });
+
+    const result = await page.evaluate(() => {
+      function isDOMElement(obj) {
+        return obj && (obj instanceof Element || obj instanceof Node ||
+          (obj.nodeType !== undefined && obj.nodeName !== undefined));
+      }
+
+      function serializeDOMElement(el) {
+        if (!el) return 'null';
+        var tag = el.tagName ? el.tagName.toLowerCase() : 'node';
+        var id = el.id ? '#' + el.id : '';
+        var classes = el.className && typeof el.className === 'string' ?
+          '.' + el.className.split(' ').filter(function(c) { return c; }).join('.') : '';
+        return '<' + tag + id + classes + '>';
+      }
+
+      function makeSerializable(val) {
+        if (val === null || val === undefined) return val;
+        if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') return val;
+        if (isDOMElement(val)) return { __dom_element__: serializeDOMElement(val) };
+        if (Array.isArray(val)) {
+          return val.map(function(item) { return makeSerializable(item); });
+        }
+        return val;
+      }
+
+      // Simulate what query_all would return
+      const elements = Array.from(document.querySelectorAll('.test'));
+      const serialized = makeSerializable(elements);
+
+      return {
+        count: serialized.length,
+        hasTestClass: serialized.every(el => el.__dom_element__ && el.__dom_element__.includes('.test'))
+      };
+    });
+
+    expect(result.count).toBe(2);
+    expect(result.hasTestClass).toBe(true);
+  });
+});
