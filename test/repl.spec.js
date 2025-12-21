@@ -8,65 +8,61 @@ import { test, expect } from '@playwright/test';
 // Use test server (run with: npm run test:serve)
 const PLAYGROUND_URL = 'http://localhost:4000/';
 
-// Helper function that simulates what OpalRepl does
-async function testLsLogic(page) {
-  return await page.evaluate(() => {
-    // Find a class to test with
-    const testClassName = 'Greeter';
-    const target = Opal.Object.$$const[testClassName];
-
+/**
+ * Helper: Get methods from a class using Opal's native APIs
+ * This mirrors the logic in OpalRepl.js cmdLs
+ */
+async function getClassMethods(page, className) {
+  return await page.evaluate((name) => {
+    const target = Opal.Object.$$const[name];
     if (!target) {
-      return { error: `Class ${testClassName} not found` };
+      return { error: `Class ${name} not found` };
     }
 
     const result = {
-      className: target.$$name,
-      isClass: target.$$is_class,
-      isModule: target.$$is_module,
-      methods: [],
+      context: target.$$name || 'Class',
+      isClass: !!target.$$is_class,
+      isModule: !!target.$$is_module,
+      classMethods: [],
       instanceMethods: [],
-      constants: [],
-      debug: {}
+      constants: []
     };
 
-    // Debug info
-    result.debug.hasPrototype = !!target.$$prototype;
-    result.debug.hasSMethods = !!target.$$smethods;
-    result.debug.smethods = target.$$smethods;
-
-    // Get class methods from the class object itself
-    const ownKeys = Object.getOwnPropertyNames(target);
-    result.debug.ownKeys = ownKeys.filter(k => k.startsWith('$'));
-
-    for (const key of ownKeys) {
-      if (key.startsWith('$') && typeof target[key] === 'function') {
-        const methodName = key.substring(1);
-        if (methodName.length > 0 &&
-            !methodName.startsWith('_') &&
-            !methodName.startsWith('$') &&
-            methodName !== 'nesting' &&
-            methodName !== 'new' &&
-            methodName !== 'allocate') {
-          result.methods.push(methodName);
+    // Get class/singleton methods using Opal's $methods
+    if (typeof target.$methods === 'function') {
+      try {
+        const methods = target.$methods(false);
+        if (methods && methods.length) {
+          for (let i = 0; i < methods.length; i++) {
+            const m = methods[i];
+            const methodName = typeof m === 'string' ? m :
+                              (typeof m.$to_s === 'function' ? String(m.$to_s()) : String(m));
+            if (methodName && methodName.charAt(0) !== '_') {
+              result.classMethods.push(methodName);
+            }
+          }
         }
+      } catch(e) {
+        result.classMethodsError = e.message;
       }
     }
 
-    // Get instance methods from prototype
-    if (target.$$prototype) {
-      const protoKeys = Object.getOwnPropertyNames(target.$$prototype);
-      result.debug.protoKeys = protoKeys.filter(k => k.startsWith('$'));
-
-      for (const key of protoKeys) {
-        if (key.startsWith('$') && typeof target.$$prototype[key] === 'function') {
-          const methodName = key.substring(1);
-          if (methodName.length > 0 &&
-              !methodName.startsWith('_') &&
-              !methodName.startsWith('$') &&
-              methodName !== 'initialize') {
-            result.instanceMethods.push(methodName);
+    // Get instance methods using Opal's $instance_methods
+    if (typeof target.$instance_methods === 'function') {
+      try {
+        const methods = target.$instance_methods(false);
+        if (methods && methods.length) {
+          for (let i = 0; i < methods.length; i++) {
+            const m = methods[i];
+            const methodName = typeof m === 'string' ? m :
+                              (typeof m.$to_s === 'function' ? String(m.$to_s()) : String(m));
+            if (methodName && methodName.charAt(0) !== '_' && methodName !== 'initialize') {
+              result.instanceMethods.push(methodName);
+            }
           }
         }
+      } catch(e) {
+        result.instanceMethodsError = e.message;
       }
     }
 
@@ -75,35 +71,13 @@ async function testLsLogic(page) {
       result.constants = Object.keys(target.$$const);
     }
 
-    // Try Opal's own method listing
-    try {
-      if (typeof target.$instance_methods === 'function') {
-        const methods = target.$instance_methods(false);
-        result.debug.opalInstanceMethods = methods.map ? methods.map(m => m.toString()) : String(methods);
-      }
-    } catch (e) {
-      result.debug.opalInstanceMethodsError = e.message;
-    }
-
-    try {
-      if (typeof target.$methods === 'function') {
-        const methods = target.$methods(false);
-        result.debug.opalMethods = methods.map ? methods.map(m => m.toString()) : String(methods);
-      }
-    } catch (e) {
-      result.debug.opalMethodsError = e.message;
-    }
-
     return result;
-  });
+  }, className);
 }
 
-test.describe('Opal REPL functionality', () => {
+test.describe('Opal REPL - Basic Functionality', () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to playground and wait for Opal to load
     await page.goto(PLAYGROUND_URL);
-
-    // Wait for Opal to be available
     await page.waitForFunction(() => typeof Opal !== 'undefined', { timeout: 10000 });
   });
 
@@ -112,7 +86,7 @@ test.describe('Opal REPL functionality', () => {
     expect(hasOpal).toBe(true);
   });
 
-  test('Can evaluate simple Ruby code', async ({ page }) => {
+  test('Can compile and evaluate simple Ruby code', async ({ page }) => {
     const result = await page.evaluate(() => {
       const compiled = Opal.compile('1 + 2');
       return eval(compiled);
@@ -120,38 +94,135 @@ test.describe('Opal REPL functionality', () => {
     expect(result).toBe(3);
   });
 
-  test('Can access Greeter class', async ({ page }) => {
-    const hasGreeter = await page.evaluate(() => {
-      return typeof Opal.Object.$$const['Greeter'] !== 'undefined';
+  test('Can compile with IRB mode for local variables', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      // First set a variable
+      Opal.compile('x = 42', { irb: true });
+      eval(Opal.compile('x = 42', { irb: true }));
+      // Then read it
+      return eval(Opal.compile('x', { irb: true }));
     });
-    expect(hasGreeter).toBe(true);
+    expect(result).toBe(42);
+  });
+});
+
+test.describe('Opal REPL - Class Inspection (ls command)', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(PLAYGROUND_URL);
+    await page.waitForFunction(() => typeof Opal !== 'undefined', { timeout: 10000 });
   });
 
-  test('Debug ls command logic', async ({ page }) => {
-    const result = await testLsLogic(page);
+  test('Can access test classes', async ({ page }) => {
+    const classes = await page.evaluate(() => {
+      return {
+        hasGreeter: typeof Opal.Object.$$const['Greeter'] !== 'undefined',
+        hasCounter: typeof Opal.Object.$$const['Counter'] !== 'undefined',
+        hasMathUtils: typeof Opal.Object.$$const['MathUtils'] !== 'undefined'
+      };
+    });
+    expect(classes.hasGreeter).toBe(true);
+    expect(classes.hasCounter).toBe(true);
+    expect(classes.hasMathUtils).toBe(true);
+  });
 
-    console.log('=== LS Debug Results ===');
-    console.log('Class name:', result.className);
-    console.log('Is class:', result.isClass);
-    console.log('Class methods found:', result.methods);
-    console.log('Instance methods found:', result.instanceMethods);
-    console.log('Constants:', result.constants);
-    console.log('Debug info:', JSON.stringify(result.debug, null, 2));
+  test('ls Greeter shows instance method #greet', async ({ page }) => {
+    const result = await getClassMethods(page, 'Greeter');
 
-    // The test passes if we get any useful info
     expect(result.error).toBeUndefined();
+    expect(result.context).toBe('Greeter');
+    expect(result.isClass).toBe(true);
+    expect(result.instanceMethods).toContain('greet');
   });
 
-  test('Can create Greeter instance and call methods', async ({ page }) => {
+  test('ls Counter shows instance methods', async ({ page }) => {
+    const result = await getClassMethods(page, 'Counter');
+
+    expect(result.error).toBeUndefined();
+    expect(result.context).toBe('Counter');
+    expect(result.instanceMethods).toContain('increment');
+    expect(result.instanceMethods).toContain('value');
+  });
+
+  test('ls MathUtils shows class methods', async ({ page }) => {
+    const result = await getClassMethods(page, 'MathUtils');
+
+    expect(result.error).toBeUndefined();
+    expect(result.context).toBe('MathUtils');
+    expect(result.isModule).toBe(true);
+    expect(result.classMethods).toContain('add');
+    expect(result.classMethods).toContain('multiply');
+  });
+});
+
+test.describe('Opal REPL - Instance Creation and Method Calls', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(PLAYGROUND_URL);
+    await page.waitForFunction(() => typeof Opal !== 'undefined', { timeout: 10000 });
+  });
+
+  test('Greeter instance greet method works', async ({ page }) => {
     const result = await page.evaluate(() => {
       const code = `
-        g = Greeter.new("Test")
+        g = Greeter.new("World")
         g.greet
       `;
-      const compiled = Opal.compile(code, { irb: true });
-      return eval(compiled);
+      return eval(Opal.compile(code, { irb: true }));
     });
+    expect(result).toContain('Hello, World');
+  });
 
-    expect(result).toContain('Hello, Test');
+  test('Counter instance methods work', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const code = `
+        c = Counter.new
+        c.increment
+        c.increment
+        c.value
+      `;
+      return eval(Opal.compile(code, { irb: true }));
+    });
+    expect(result).toBe(2);
+  });
+
+  test('MathUtils module methods work', async ({ page }) => {
+    const results = await page.evaluate(() => {
+      return {
+        add: eval(Opal.compile('MathUtils.add(3, 4)', { irb: true })),
+        multiply: eval(Opal.compile('MathUtils.multiply(3, 4)', { irb: true }))
+      };
+    });
+    expect(results.add).toBe(7);
+    expect(results.multiply).toBe(12);
+  });
+});
+
+test.describe('Opal REPL - Error Handling', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(PLAYGROUND_URL);
+    await page.waitForFunction(() => typeof Opal !== 'undefined', { timeout: 10000 });
+  });
+
+  test('Syntax error is caught', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      try {
+        Opal.compile('def foo(');
+        return { error: null };
+      } catch (e) {
+        return { error: e.message };
+      }
+    });
+    expect(result.error).not.toBeNull();
+  });
+
+  test('Undefined method raises error', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      try {
+        eval(Opal.compile('Greeter.undefined_method', { irb: true }));
+        return { error: null };
+      } catch (e) {
+        return { error: e.message };
+      }
+    });
+    expect(result.error).not.toBeNull();
   });
 });
