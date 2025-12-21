@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Opal REPL Test Page</title>
+  <script src="../../src/lib/opal.js"></script>
+  <script src="../../src/lib/opal-parser.js"></script>
+</head>
+<body>
+  <h1>Opal REPL Test Page</h1>
+  <p>This page is used for E2E testing of the Opal Browser REPL extension.</p>
+
+  <script>
+    // Define test classes using Opal
+    Opal.eval(`
+      class Greeter
+        def initialize(name)
+          @name = name
+        end
+
+        def greet
+          "Hello, #{@name}!"
+        end
+      end
+
+      class Counter
+        def initialize
+          @count = 0
+        end
+
+        def increment
+          @count += 1
+        end
+
+        def value
+          @count
+        end
+      end
+
+      module MathUtils
+        def self.add(a, b)
+          a + b
+        end
+
+        def self.multiply(a, b)
+          a * b
+        end
+      end
+    `);
+
+    console.log('Opal loaded and test classes defined');
+  </script>
+</body>
+</html>

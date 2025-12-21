@@ -10,7 +10,9 @@
     "dev": "node scripts/build.js --watch",
     "build-opal": "ruby scripts/build-opal.rb",
     "create-icons": "node scripts/create-icons.js",
-    "setup": "npm run build-opal && npm run create-icons && npm run build"
+    "setup": "npm run build-opal && npm run create-icons && npm run build",
+    "test": "npx playwright test",
+    "test:serve": "node test/serve.js"
   },
   "keywords": [
     "opal",

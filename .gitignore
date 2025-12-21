@@ -13,3 +13,7 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Test artifacts
+test-results/
+playwright-report/
