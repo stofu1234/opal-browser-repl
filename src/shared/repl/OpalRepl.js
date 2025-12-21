@@ -981,19 +981,45 @@ export class OpalRepl {
             ? window.__opalReplContextStack__[window.__opalReplContextStack__.length - 1]
             : Opal.top;
 
-          // Compile the target expression
-          var compiled = Opal.compile(${JSON.stringify(target)}, {irb: true});
-
-          // Evaluate in current context
+          var target = ${JSON.stringify(target)};
           var newContext;
-          if (currentContext && currentContext !== Opal.top && typeof currentContext.$instance_eval === 'function') {
-            // Use instance_eval to evaluate in the current context
-            newContext = currentContext.$instance_eval(Opal.$r(Opal.Opal).$arity_lambda(function() {
-              return eval(compiled);
-            }, 0, 0));
+
+          // Check if target is a simple constant name (starts with uppercase, no special chars)
+          var isSimpleConstant = /^[A-Z][A-Za-z0-9_]*$/.test(target);
+
+          if (isSimpleConstant && currentContext && currentContext.$$const && currentContext.$$const[target]) {
+            // Direct constant access from current context
+            newContext = currentContext.$$const[target];
+          } else if (isSimpleConstant && Opal.Object.$$const && Opal.Object.$$const[target]) {
+            // Try global constant
+            newContext = Opal.Object.$$const[target];
           } else {
-            // Top level - just eval directly
-            newContext = eval(compiled);
+            // Compile and evaluate the expression
+            var compiled = Opal.compile(target, {irb: true});
+
+            if (currentContext && currentContext !== Opal.top &&
+                (currentContext.$$is_class || currentContext.$$is_module)) {
+              // For classes/modules, try to access as a constant first
+              if (currentContext.$$const && currentContext.$$const[target]) {
+                newContext = currentContext.$$const[target];
+              } else {
+                // Fall back to eval at top level
+                newContext = eval(compiled);
+              }
+            } else if (currentContext && currentContext !== Opal.top &&
+                       typeof currentContext.$instance_exec === 'function') {
+              // For instances, use instance_exec with a simple function wrapper
+              try {
+                var fn = new Function('return ' + compiled);
+                newContext = currentContext.$instance_exec(Opal.nil, fn);
+              } catch(e2) {
+                // Fall back to eval
+                newContext = eval(compiled);
+              }
+            } else {
+              // Top level - just eval directly
+              newContext = eval(compiled);
+            }
           }
 
           if (newContext === undefined || newContext === null || newContext === Opal.nil) {
