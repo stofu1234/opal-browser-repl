@@ -5,8 +5,8 @@
 
 import { test, expect } from '@playwright/test';
 
-// Use local dev server for testing
-const PLAYGROUND_URL = 'http://localhost:3000/';
+// Use test server (run with: npm run test:serve)
+const PLAYGROUND_URL = 'http://localhost:4000/';
 
 // Helper function that simulates what OpalRepl does
 async function testLsLogic(page) {
