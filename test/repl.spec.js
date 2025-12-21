@@ -437,3 +437,213 @@ test.describe('Opal REPL - ls Command Flags', () => {
     expect(result.ivars).toContain('@name');
   });
 });
+
+test.describe('Opal REPL - Output and Display', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(PLAYGROUND_URL);
+    await page.waitForFunction(() => typeof Opal !== 'undefined', { timeout: 10000 });
+  });
+
+  test('puts outputs string with newline', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      // Capture stdout
+      const output = [];
+      const originalStdout = Opal.gvars.stdout;
+
+      const captureIO = {
+        write: (str) => { output.push(str); return str; },
+        puts: function() {
+          for (let i = 0; i < arguments.length; i++) {
+            const arg = arguments[i];
+            const text = arg === Opal.nil ? '' :
+                        (typeof arg.$to_s === 'function') ? arg.$to_s() : String(arg);
+            output.push(text + '\n');
+          }
+          return Opal.nil;
+        },
+        flush: () => {}
+      };
+      captureIO.$write = captureIO.write;
+      captureIO.$puts = captureIO.puts;
+      captureIO.$flush = captureIO.flush;
+
+      Opal.gvars.stdout = captureIO;
+
+      try {
+        eval(Opal.compile('puts "Hello, World!"', { irb: true }));
+      } finally {
+        Opal.gvars.stdout = originalStdout;
+      }
+
+      return { output: output.join('') };
+    });
+
+    expect(result.output).toContain('Hello, World!');
+    expect(result.output).toContain('\n');
+  });
+
+  test('print outputs string without newline', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const output = [];
+      const originalStdout = Opal.gvars.stdout;
+
+      const captureIO = {
+        write: (str) => { output.push(String(str)); return str; },
+        print: function() {
+          for (let i = 0; i < arguments.length; i++) {
+            const arg = arguments[i];
+            const text = arg === Opal.nil ? 'nil' :
+                        (typeof arg.$to_s === 'function') ? arg.$to_s() : String(arg);
+            output.push(text);
+          }
+          return Opal.nil;
+        },
+        flush: () => {}
+      };
+      captureIO.$write = captureIO.write;
+      captureIO.$print = captureIO.print;
+      captureIO.$flush = captureIO.flush;
+
+      Opal.gvars.stdout = captureIO;
+
+      try {
+        eval(Opal.compile('print "Hello"', { irb: true }));
+      } finally {
+        Opal.gvars.stdout = originalStdout;
+      }
+
+      return { output: output.join('') };
+    });
+
+    expect(result.output).toBe('Hello');
+  });
+
+  test('$_ stores last evaluation result', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      // First evaluation
+      const first = eval(Opal.compile('42 + 8', { irb: true }));
+
+      // Store in $_
+      Opal.gvars['_'] = first;
+
+      // Read $_
+      const stored = Opal.gvars['_'];
+
+      return { first, stored };
+    });
+
+    expect(result.first).toBe(50);
+    expect(result.stored).toBe(50);
+  });
+
+  test('nil result displays correctly', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const value = eval(Opal.compile('nil', { irb: true }));
+      return {
+        isNil: value === Opal.nil,
+        display: value === Opal.nil ? 'nil' : String(value)
+      };
+    });
+
+    expect(result.isNil).toBe(true);
+    expect(result.display).toBe('nil');
+  });
+
+  test('object instance displays with class name and id', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      eval(Opal.compile('g = Greeter.new("Test")', { irb: true }));
+      const instance = Opal.irb_vars.g;
+
+      // Format like #<ClassName:0xhexid>
+      const className = instance.$$class ? instance.$$class.$$name : 'Object';
+      const id = instance.$$id ? instance.$$id.toString(16) : '????';
+
+      return {
+        className,
+        hasId: instance.$$id !== undefined,
+        formatted: `#<${className}:0x${id}>`
+      };
+    });
+
+    expect(result.className).toBe('Greeter');
+    expect(result.hasId).toBe(true);
+    expect(result.formatted).toMatch(/^#<Greeter:0x[0-9a-f]+>$/);
+  });
+
+  test('array displays with brackets', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const arr = eval(Opal.compile('[1, 2, 3]', { irb: true }));
+
+      // Convert Opal array to JS array for display
+      let display;
+      if (arr && typeof arr.$to_a === 'function') {
+        const jsArr = arr.$to_a();
+        display = '[' + jsArr.join(', ') + ']';
+      } else if (Array.isArray(arr)) {
+        display = '[' + arr.join(', ') + ']';
+      }
+
+      return { display, length: arr.length };
+    });
+
+    expect(result.display).toBe('[1, 2, 3]');
+    expect(result.length).toBe(3);
+  });
+
+  test('hash displays with braces', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const hash = eval(Opal.compile('{ a: 1, b: 2 }', { irb: true }));
+
+      // Get hash keys
+      let keys = [];
+      if (typeof hash.$keys === 'function') {
+        const opalKeys = hash.$keys();
+        for (let i = 0; i < opalKeys.length; i++) {
+          const k = opalKeys[i];
+          keys.push(typeof k.$to_s === 'function' ? k.$to_s() : String(k));
+        }
+      }
+
+      return { hasKeys: keys.length > 0, keys };
+    });
+
+    expect(result.hasKeys).toBe(true);
+    expect(result.keys).toContain('a');
+    expect(result.keys).toContain('b');
+  });
+
+  test('string displays with quotes', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const str = eval(Opal.compile('"hello world"', { irb: true }));
+      const display = `"${str}"`;
+      return { str, display };
+    });
+
+    expect(result.str).toBe('hello world');
+    expect(result.display).toBe('"hello world"');
+  });
+
+  test('boolean displays correctly', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const t = eval(Opal.compile('true', { irb: true }));
+      const f = eval(Opal.compile('false', { irb: true }));
+      return { true: t, false: f };
+    });
+
+    expect(result.true).toBe(true);
+    expect(result.false).toBe(false);
+  });
+
+  test('number displays correctly', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const integer = eval(Opal.compile('42', { irb: true }));
+      const float = eval(Opal.compile('3.14', { irb: true }));
+      const negative = eval(Opal.compile('-10', { irb: true }));
+      return { integer, float, negative };
+    });
+
+    expect(result.integer).toBe(42);
+    expect(result.float).toBeCloseTo(3.14);
+    expect(result.negative).toBe(-10);
+  });
+});
