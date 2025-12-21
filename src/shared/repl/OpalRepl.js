@@ -672,11 +672,11 @@ export class OpalRepl {
             return result;
           }
 
-          // Get context name
-          if (target.$$class) {
-            result.context = '#<' + (target.$$class.$$name || 'Object') + '>';
-          } else if (target.$$is_class || target.$$is_module) {
+          // Get context name (check $$is_class first - classes also have $$class pointing to Class)
+          if (target.$$is_class || target.$$is_module) {
             result.context = target.$$name || 'Class';
+          } else if (target.$$class) {
+            result.context = '#<' + (target.$$class.$$name || 'Object') + '>';
           } else {
             result.context = Object.prototype.toString.call(target).slice(8, -1);
           }
