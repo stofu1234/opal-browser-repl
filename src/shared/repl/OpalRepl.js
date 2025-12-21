@@ -686,43 +686,38 @@ export class OpalRepl {
           // For instances: get methods from the object's class (not superclasses)
 
           if (target.$$is_class || target.$$is_module) {
-            // It's a class or module - show both class methods and instance methods
+            // It's a class or module - use Opal's native method listing
 
-            // Get class/singleton methods from the class object itself
-            var ownKeys = Object.getOwnPropertyNames(target);
-            for (var i = 0; i < ownKeys.length; i++) {
-              var key = ownKeys[i];
-              if (key.startsWith('$') && typeof target[key] === 'function') {
-                var methodName = key.substring(1);
-                // Skip internal methods
-                if (methodName.length > 0 &&
-                    !methodName.startsWith('_') &&
-                    !methodName.startsWith('$') &&
-                    methodName !== 'nesting' &&
-                    methodName !== 'new' &&
-                    methodName !== 'allocate' &&
-                    result.methods.indexOf(methodName) === -1) {
-                  result.methods.push(methodName);
-                }
-              }
-            }
-
-            // Also get instance methods from prototype (these are the methods defined with 'def')
-            if (target.$$prototype) {
-              var protoKeys = Object.getOwnPropertyNames(target.$$prototype);
-              for (var i = 0; i < protoKeys.length; i++) {
-                var key = protoKeys[i];
-                if (key.startsWith('$') && typeof target.$$prototype[key] === 'function') {
-                  var methodName = key.substring(1);
-                  if (methodName.length > 0 &&
-                      !methodName.startsWith('_') &&
-                      !methodName.startsWith('$') &&
-                      methodName !== 'initialize' &&
-                      result.methods.indexOf(methodName) === -1) {
-                    result.methods.push('#' + methodName);  // Prefix with # to indicate instance method
+            // Get class/singleton methods using Opal's $methods
+            if (typeof target.$methods === 'function') {
+              try {
+                var classMethods = target.$methods(false);
+                if (classMethods && classMethods.length) {
+                  for (var i = 0; i < classMethods.length; i++) {
+                    var m = classMethods[i];
+                    var methodName = (typeof m.$to_s === 'function') ? m.$to_s() : String(m);
+                    if (methodName && !methodName.startsWith('_')) {
+                      result.methods.push('.' + methodName);  // Prefix with . for class method
+                    }
                   }
                 }
-              }
+              } catch(e) {}
+            }
+
+            // Get instance methods using Opal's $instance_methods
+            if (typeof target.$instance_methods === 'function') {
+              try {
+                var instanceMethods = target.$instance_methods(false);
+                if (instanceMethods && instanceMethods.length) {
+                  for (var i = 0; i < instanceMethods.length; i++) {
+                    var m = instanceMethods[i];
+                    var methodName = (typeof m.$to_s === 'function') ? m.$to_s() : String(m);
+                    if (methodName && !methodName.startsWith('_') && methodName !== 'initialize') {
+                      result.methods.push('#' + methodName);  // Prefix with # for instance method
+                    }
+                  }
+                }
+              } catch(e) {}
             }
           } else if (target.$$class) {
             // It's an instance - get methods defined on its class (not inherited)
