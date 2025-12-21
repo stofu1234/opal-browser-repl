@@ -33,6 +33,9 @@ const server = createServer(async (req, res) => {
   } else if (req.url.startsWith('/lib/')) {
     // Serve from dist/chrome/lib (opal.js, opal-parser.js, etc.)
     filePath = join(DIST_DIR, req.url);
+  } else if (req.url.startsWith('/popup/')) {
+    // Serve popup files from dist/chrome/popup/
+    filePath = join(DIST_DIR, req.url);
   } else {
     // Try fixtures first, then dist
     filePath = join(FIXTURES_DIR, req.url);

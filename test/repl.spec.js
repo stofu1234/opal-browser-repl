@@ -647,3 +647,127 @@ test.describe('Opal REPL - Output and Display', () => {
     expect(result.negative).toBe(-10);
   });
 });
+
+// Popup Settings Tests
+const POPUP_URL = 'http://localhost:4000/popup/popup.html';
+
+test.describe('Opal REPL - Popup Settings', () => {
+  test.beforeEach(async ({ page }) => {
+    // Clear localStorage before each test
+    await page.goto(POPUP_URL);
+    await page.evaluate(() => {
+      localStorage.removeItem('opal-repl-settings');
+    });
+    await page.reload();
+  });
+
+  test('popup page loads correctly', async ({ page }) => {
+    await page.goto(POPUP_URL);
+
+    // Check title is present
+    const title = await page.locator('h1').textContent();
+    expect(title).toBe('Opal REPL');
+
+    // Check both settings are present (checkboxes are hidden, check labels exist)
+    const opalDetectionLabel = await page.locator('label:has(#opalDetectionMode)');
+    const autoInjectLabel = await page.locator('label:has(#autoInjectOpal)');
+
+    await expect(opalDetectionLabel).toBeVisible();
+    await expect(autoInjectLabel).toBeVisible();
+  });
+
+  test('default settings are applied correctly', async ({ page }) => {
+    await page.goto(POPUP_URL);
+
+    // Default: opalDetectionMode = false, autoInjectOpal = true
+    const opalDetectionMode = await page.locator('#opalDetectionMode').isChecked();
+    const autoInjectOpal = await page.locator('#autoInjectOpal').isChecked();
+
+    expect(opalDetectionMode).toBe(false);
+    expect(autoInjectOpal).toBe(true);
+  });
+
+  test('opalDetectionMode toggle saves to localStorage', async ({ page }) => {
+    await page.goto(POPUP_URL);
+
+    // Toggle opalDetectionMode by clicking the label (checkbox is hidden)
+    await page.locator('label:has(#opalDetectionMode)').click();
+
+    // Check it's now checked
+    const isChecked = await page.locator('#opalDetectionMode').isChecked();
+    expect(isChecked).toBe(true);
+
+    // Check localStorage
+    const stored = await page.evaluate(() => {
+      const data = localStorage.getItem('opal-repl-settings');
+      return data ? JSON.parse(data) : null;
+    });
+
+    expect(stored).not.toBeNull();
+    expect(stored.opalDetectionMode).toBe(true);
+  });
+
+  test('autoInjectOpal toggle saves to localStorage', async ({ page }) => {
+    await page.goto(POPUP_URL);
+
+    // Toggle autoInjectOpal (default is true, so turn it off) by clicking the label
+    await page.locator('label:has(#autoInjectOpal)').click();
+
+    // Check it's now unchecked
+    const isChecked = await page.locator('#autoInjectOpal').isChecked();
+    expect(isChecked).toBe(false);
+
+    // Check localStorage
+    const stored = await page.evaluate(() => {
+      const data = localStorage.getItem('opal-repl-settings');
+      return data ? JSON.parse(data) : null;
+    });
+
+    expect(stored).not.toBeNull();
+    expect(stored.autoInjectOpal).toBe(false);
+  });
+
+  test('settings persist after reload', async ({ page }) => {
+    await page.goto(POPUP_URL);
+
+    // Change both settings by clicking labels
+    await page.locator('label:has(#opalDetectionMode)').click();
+    await page.locator('label:has(#autoInjectOpal)').click();
+
+    // Reload the page
+    await page.reload();
+
+    // Check settings are preserved
+    const opalDetectionMode = await page.locator('#opalDetectionMode').isChecked();
+    const autoInjectOpal = await page.locator('#autoInjectOpal').isChecked();
+
+    expect(opalDetectionMode).toBe(true);
+    expect(autoInjectOpal).toBe(false);
+  });
+
+  test('version is displayed in footer', async ({ page }) => {
+    await page.goto(POPUP_URL);
+
+    const version = await page.locator('.version').textContent();
+    expect(version).toMatch(/^v\d+\.\d+\.\d+$/);
+  });
+
+  test('setting labels are correct', async ({ page }) => {
+    await page.goto(POPUP_URL);
+
+    const labels = await page.locator('.setting-label').allTextContents();
+
+    expect(labels).toContain('Opal Detection Mode');
+    expect(labels).toContain('Auto-inject Opal');
+  });
+
+  test('setting descriptions are present', async ({ page }) => {
+    await page.goto(POPUP_URL);
+
+    const descriptions = await page.locator('.setting-desc').allTextContents();
+
+    expect(descriptions.length).toBe(2);
+    expect(descriptions[0]).toContain('Opal is detected');
+    expect(descriptions[1]).toContain('Automatically inject');
+  });
+});
