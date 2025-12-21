@@ -389,6 +389,39 @@ export class OpalRepl {
 
           var jsResult = null;
           if (result !== Opal.nil) {
+            // Helper function to check if value is a DOM element
+            function isDOMElement(obj) {
+              return obj && (obj instanceof Element || obj instanceof Node ||
+                (obj.nodeType !== undefined && obj.nodeName !== undefined));
+            }
+
+            // Helper function to serialize a DOM element
+            function serializeDOMElement(el) {
+              if (!el) return 'null';
+              var tag = el.tagName ? el.tagName.toLowerCase() : 'node';
+              var id = el.id ? '#' + el.id : '';
+              var classes = el.className && typeof el.className === 'string' ?
+                '.' + el.className.split(' ').filter(function(c) { return c; }).join('.') : '';
+              return '<' + tag + id + classes + '>';
+            }
+
+            // Helper function to make value serializable
+            function makeSerializable(val) {
+              if (val === null || val === undefined) return val;
+              if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') return val;
+              if (isDOMElement(val)) return { __dom_element__: serializeDOMElement(val) };
+              if (Array.isArray(val)) {
+                return val.map(function(item) { return makeSerializable(item); });
+              }
+              if (val && typeof val === 'object') {
+                // Check for common non-serializable types
+                if (val instanceof Window) return { __native__: '[Window]' };
+                if (val instanceof Document) return { __native__: '[Document]' };
+                if (typeof val.then === 'function') return { __native__: '[Promise]' };
+              }
+              return val;
+            }
+
             // Try to convert to a serializable format
             try {
               // Handle class/module objects
@@ -399,7 +432,8 @@ export class OpalRepl {
                   type: result.$$is_module ? 'Module' : 'Class'
                 };
               } else if (result && typeof result.$to_n === 'function') {
-                jsResult = result.$to_n();
+                var nativeResult = result.$to_n();
+                jsResult = makeSerializable(nativeResult);
               } else if (result && result.$$class) {
                 // Opal instance - create serializable representation
                 jsResult = {
@@ -407,8 +441,14 @@ export class OpalRepl {
                   class: result.$$class.$$name || 'Object',
                   id: result.$$id
                 };
+              } else if (isDOMElement(result)) {
+                // Direct DOM element result
+                jsResult = { __dom_element__: serializeDOMElement(result) };
+              } else if (Array.isArray(result)) {
+                // Native JS array - make serializable
+                jsResult = makeSerializable(result);
               } else {
-                jsResult = result;
+                jsResult = makeSerializable(result);
               }
             } catch(convErr) {
               // Conversion failed, return string representation
@@ -476,6 +516,16 @@ export class OpalRepl {
       // Handle string representation
       if (value.__opal_string__) {
         return value.__opal_string__;
+      }
+
+      // Handle DOM element representation
+      if (value.__dom_element__) {
+        return value.__dom_element__;
+      }
+
+      // Handle native JS object representation
+      if (value.__native__) {
+        return value.__native__;
       }
 
       if (value.$$class) {
