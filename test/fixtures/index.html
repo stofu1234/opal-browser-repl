@@ -47,6 +47,29 @@
           a * b
         end
       end
+
+      # Nested module for testing cd with constants
+      module OuterModule
+        VERSION = "1.0.0"
+
+        module InnerModule
+          DESCRIPTION = "Inner module for testing"
+
+          def self.hello
+            "Hello from InnerModule"
+          end
+        end
+
+        class NestedClass
+          def initialize
+            @value = 42
+          end
+
+          def get_value
+            @value
+          end
+        end
+      end
     `);
 
     console.log('Opal loaded and test classes defined');

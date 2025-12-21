@@ -325,6 +325,89 @@ test.describe('Opal REPL - REPL Commands', () => {
     expect(result.depthAfterPop).toBe(1);
     expect(result.finalDepth).toBe(0);
   });
+
+  test('cd into nested module constant works', async ({ page }) => {
+    // Test that cd into a module, then cd into its nested constant works
+    const result = await page.evaluate(() => {
+      // Initialize context stack
+      window.__opalReplContextStack__ = [];
+
+      // Get OuterModule
+      const outerModule = Opal.Object.$$const['OuterModule'];
+      if (!outerModule) {
+        return { error: 'OuterModule not found' };
+      }
+
+      // Push OuterModule to context stack
+      window.__opalReplContextStack__.push(outerModule);
+
+      // Now try to access InnerModule from OuterModule's context
+      const currentContext = window.__opalReplContextStack__[window.__opalReplContextStack__.length - 1];
+
+      // Check if InnerModule exists in OuterModule's constants
+      const innerModule = currentContext.$$const ? currentContext.$$const['InnerModule'] : null;
+
+      if (!innerModule) {
+        return { error: 'InnerModule not found in OuterModule' };
+      }
+
+      // Push InnerModule to context stack
+      window.__opalReplContextStack__.push(innerModule);
+
+      return {
+        success: true,
+        outerModuleName: outerModule.$$name,
+        innerModuleName: innerModule.$$name,
+        stackDepth: window.__opalReplContextStack__.length,
+        innerModuleDescription: innerModule.$$const ? innerModule.$$const['DESCRIPTION'] : null
+      };
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+    expect(result.outerModuleName).toBe('OuterModule');
+    // Opal's $$name may return short name or full path depending on version
+    expect(result.innerModuleName).toMatch(/InnerModule/);
+    expect(result.stackDepth).toBe(2);
+    expect(result.innerModuleDescription).toBe('Inner module for testing');
+  });
+
+  test('cd into nested class within module works', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      // Initialize context stack
+      window.__opalReplContextStack__ = [];
+
+      // Get OuterModule
+      const outerModule = Opal.Object.$$const['OuterModule'];
+      if (!outerModule) {
+        return { error: 'OuterModule not found' };
+      }
+
+      // Push OuterModule to context stack
+      window.__opalReplContextStack__.push(outerModule);
+
+      // Access NestedClass from OuterModule
+      const nestedClass = outerModule.$$const ? outerModule.$$const['NestedClass'] : null;
+
+      if (!nestedClass) {
+        return { error: 'NestedClass not found in OuterModule' };
+      }
+
+      return {
+        success: true,
+        isClass: nestedClass.$$is_class === true,
+        className: nestedClass.$$name,
+        hasGetValueMethod: typeof nestedClass.$$prototype.$get_value === 'function'
+      };
+    });
+
+    expect(result.error).toBeUndefined();
+    expect(result.success).toBe(true);
+    expect(result.isClass).toBe(true);
+    // Opal's $$name may return short name or full path depending on version
+    expect(result.className).toMatch(/NestedClass/);
+    expect(result.hasGetValueMethod).toBe(true);
+  });
 });
 
 test.describe('Opal REPL - ls Command Flags', () => {
