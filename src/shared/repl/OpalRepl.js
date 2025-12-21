@@ -686,12 +686,41 @@ export class OpalRepl {
           // For instances: get methods from the object's class (not superclasses)
 
           if (target.$$is_class || target.$$is_module) {
-            // It's a class or module - show class methods
-            if (target.$$smethods) {
-              for (var i = 0; i < target.$$smethods.length; i++) {
-                var m = target.$$smethods[i];
-                if (typeof m === 'string' && !m.startsWith('_')) {
-                  result.methods.push(m);
+            // It's a class or module - show both class methods and instance methods
+
+            // Get class/singleton methods from the class object itself
+            var ownKeys = Object.getOwnPropertyNames(target);
+            for (var i = 0; i < ownKeys.length; i++) {
+              var key = ownKeys[i];
+              if (key.startsWith('$') && typeof target[key] === 'function') {
+                var methodName = key.substring(1);
+                // Skip internal methods
+                if (methodName.length > 0 &&
+                    !methodName.startsWith('_') &&
+                    !methodName.startsWith('$') &&
+                    methodName !== 'nesting' &&
+                    methodName !== 'new' &&
+                    methodName !== 'allocate' &&
+                    result.methods.indexOf(methodName) === -1) {
+                  result.methods.push(methodName);
+                }
+              }
+            }
+
+            // Also get instance methods from prototype (these are the methods defined with 'def')
+            if (target.$$prototype) {
+              var protoKeys = Object.getOwnPropertyNames(target.$$prototype);
+              for (var i = 0; i < protoKeys.length; i++) {
+                var key = protoKeys[i];
+                if (key.startsWith('$') && typeof target.$$prototype[key] === 'function') {
+                  var methodName = key.substring(1);
+                  if (methodName.length > 0 &&
+                      !methodName.startsWith('_') &&
+                      !methodName.startsWith('$') &&
+                      methodName !== 'initialize' &&
+                      result.methods.indexOf(methodName) === -1) {
+                    result.methods.push('#' + methodName);  // Prefix with # to indicate instance method
+                  }
                 }
               }
             }
