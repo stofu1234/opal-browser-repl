@@ -947,9 +947,10 @@ export class OpalRepl {
         this.log('Already at top level', 'warning');
         return;
       }
-      const popped = this.contextStack.pop();
+      this.contextStack.pop();
       // Pop from page context stack too
-      await this.evalFunction('window.__opalReplContextStack__.pop()');
+      // Use void to ensure undefined is returned (avoids serialization issues with Opal objects)
+      await this.evalFunction('void window.__opalReplContextStack__.pop()');
       const newContext = this.contextStack.length > 0
         ? this.contextStack[this.contextStack.length - 1].name
         : 'main';
@@ -960,7 +961,8 @@ export class OpalRepl {
     if (target === '/') {
       // Go back to top level
       this.contextStack = [];
-      await this.evalFunction('window.__opalReplContextStack__ = []');
+      // Use void to ensure undefined is returned
+      await this.evalFunction('void (window.__opalReplContextStack__ = [])');
       this.log('Returned to: main (top level)', 'info');
       return;
     }

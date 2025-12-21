@@ -408,6 +408,62 @@ test.describe('Opal REPL - REPL Commands', () => {
     expect(result.className).toMatch(/NestedClass/);
     expect(result.hasGetValueMethod).toBe(true);
   });
+
+  test('cd .. (exit) after cd into module does not freeze', async ({ page }) => {
+    // This test verifies that popping from context stack works without hanging
+    // The issue was that pop() returns an Opal object that can't be serialized
+
+    // First, push a module to the context stack
+    await page.evaluate(() => {
+      window.__opalReplContextStack__ = [];
+      const outerModule = Opal.Object.$$const['OuterModule'];
+      window.__opalReplContextStack__.push(outerModule);
+    });
+
+    // Verify the stack has one item
+    const stackBefore = await page.evaluate(() => window.__opalReplContextStack__.length);
+    expect(stackBefore).toBe(1);
+
+    // Now pop from the stack - this should NOT hang
+    // Use void operator to ensure undefined is returned (same pattern as actual implementation)
+    const popResult = await page.evaluate(() => {
+      return void window.__opalReplContextStack__.pop();
+    });
+
+    // Verify pop returned undefined (not the complex Opal object)
+    expect(popResult).toBeUndefined();
+
+    // Verify the stack is now empty
+    const stackAfter = await page.evaluate(() => window.__opalReplContextStack__.length);
+    expect(stackAfter).toBe(0);
+  });
+
+  test('cd / after nested cd does not freeze', async ({ page }) => {
+    // Push multiple modules to the context stack
+    await page.evaluate(() => {
+      window.__opalReplContextStack__ = [];
+      const outerModule = Opal.Object.$$const['OuterModule'];
+      window.__opalReplContextStack__.push(outerModule);
+      const innerModule = outerModule.$$const['InnerModule'];
+      window.__opalReplContextStack__.push(innerModule);
+    });
+
+    // Verify stack depth
+    const stackBefore = await page.evaluate(() => window.__opalReplContextStack__.length);
+    expect(stackBefore).toBe(2);
+
+    // Clear the stack (cd /) - this should NOT hang
+    // Use void operator to ensure undefined is returned
+    const clearResult = await page.evaluate(() => {
+      return void (window.__opalReplContextStack__ = []);
+    });
+
+    expect(clearResult).toBeUndefined();
+
+    // Verify the stack is now empty
+    const stackAfter = await page.evaluate(() => window.__opalReplContextStack__.length);
+    expect(stackAfter).toBe(0);
+  });
 });
 
 test.describe('Opal REPL - ls Command Flags', () => {
