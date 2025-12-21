@@ -771,3 +771,213 @@ test.describe('Opal REPL - Popup Settings', () => {
     expect(descriptions[1]).toContain('Automatically inject');
   });
 });
+
+// Edge Case Tests
+test.describe('Opal REPL - Edge Cases', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto(PLAYGROUND_URL);
+    await page.waitForFunction(() => typeof Opal !== 'undefined', { timeout: 10000 });
+  });
+
+  test('empty string evaluation returns empty string', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const val = eval(Opal.compile('""', { irb: true }));
+      return { value: val, isEmpty: val === '' };
+    });
+
+    expect(result.isEmpty).toBe(true);
+  });
+
+  test('unicode strings are handled correctly', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      // Use escape sequences for Unicode characters in the Ruby code
+      const japanese = eval(Opal.compile('"\\u3053\\u3093\\u306b\\u3061\\u306f"', { irb: true }));
+      const asciiWithSpecial = eval(Opal.compile('"Hello World!"', { irb: true }));
+      return { japanese, asciiWithSpecial };
+    });
+
+    expect(result.japanese).toBe('こんにちは');
+    expect(result.asciiWithSpecial).toBe('Hello World!');
+  });
+
+  test('multiline strings are preserved', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const multiline = eval(Opal.compile('"line1\\nline2\\nline3"', { irb: true }));
+      return { value: multiline, hasNewlines: multiline.includes('\n') };
+    });
+
+    expect(result.hasNewlines).toBe(true);
+    expect(result.value).toBe('line1\nline2\nline3');
+  });
+
+  test('special characters in strings are escaped', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const special = eval(Opal.compile('"tab:\\there\\nquote:\\"test\\""', { irb: true }));
+      return { value: special };
+    });
+
+    expect(result.value).toContain('\t');
+    expect(result.value).toContain('"');
+  });
+
+  test('large numbers are handled correctly', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const big = eval(Opal.compile('10 ** 15', { irb: true }));
+      const negative = eval(Opal.compile('-(10 ** 10)', { irb: true }));
+      return { big, negative };
+    });
+
+    expect(result.big).toBe(1000000000000000);
+    expect(result.negative).toBe(-10000000000);
+  });
+
+  test('float precision is maintained', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const precise = eval(Opal.compile('1.0 / 3.0', { irb: true }));
+      return { value: precise };
+    });
+
+    expect(result.value).toBeCloseTo(0.3333333333333333, 10);
+  });
+
+  test('empty array returns empty array', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const arr = eval(Opal.compile('[]', { irb: true }));
+      return { length: arr.length, isEmpty: arr.length === 0 };
+    });
+
+    expect(result.isEmpty).toBe(true);
+    expect(result.length).toBe(0);
+  });
+
+  test('empty hash returns empty hash', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const hash = eval(Opal.compile('{}', { irb: true }));
+      const keys = hash.$keys ? hash.$keys() : [];
+      return { keyCount: keys.length, isEmpty: keys.length === 0 };
+    });
+
+    expect(result.isEmpty).toBe(true);
+    expect(result.keyCount).toBe(0);
+  });
+
+  test('nested data structures work correctly', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const nested = eval(Opal.compile('[[1, 2], [3, 4]]', { irb: true }));
+      return {
+        length: nested.length,
+        firstLength: nested[0].length,
+        firstFirst: nested[0][0]
+      };
+    });
+
+    expect(result.length).toBe(2);
+    expect(result.firstLength).toBe(2);
+    expect(result.firstFirst).toBe(1);
+  });
+
+  test('multiple statements on one line work', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const val = eval(Opal.compile('a = 1; b = 2; a + b', { irb: true }));
+      return { value: val };
+    });
+
+    expect(result.value).toBe(3);
+  });
+
+  test('block syntax works', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const val = eval(Opal.compile('[1, 2, 3].map { |x| x * 2 }', { irb: true }));
+      return { result: Array.from(val) };
+    });
+
+    expect(result.result).toEqual([2, 4, 6]);
+  });
+
+  test('symbol creation works', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const sym = eval(Opal.compile(':my_symbol', { irb: true }));
+      // Opal symbols have a $to_s method and may use $$is_symbol or just be a special object
+      const value = sym.$to_s ? sym.$to_s() : String(sym);
+      // Check if it behaves like a symbol (has $to_s that returns the symbol name)
+      return {
+        hasToS: typeof sym.$to_s === 'function',
+        value: value
+      };
+    });
+
+    expect(result.hasToS).toBe(true);
+    expect(result.value).toBe('my_symbol');
+  });
+
+  test('range works correctly', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const range = eval(Opal.compile('(1..5).to_a', { irb: true }));
+      return { values: Array.from(range) };
+    });
+
+    expect(result.values).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  test('regex works correctly', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const match = eval(Opal.compile('"hello world" =~ /world/', { irb: true }));
+      return { matchIndex: match };
+    });
+
+    expect(result.matchIndex).toBe(6);
+  });
+
+  test('exception message is preserved', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      try {
+        eval(Opal.compile('raise "custom error message"', { irb: true }));
+        return { error: null };
+      } catch (e) {
+        return { error: e.message };
+      }
+    });
+
+    expect(result.error).toContain('custom error message');
+  });
+
+  test('class inheritance works', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const code = `
+        class Parent
+          def hello
+            "parent"
+          end
+        end
+        class Child < Parent
+          def hello
+            "child: " + super
+          end
+        end
+        Child.new.hello
+      `;
+      return { value: eval(Opal.compile(code, { irb: true })) };
+    });
+
+    expect(result.value).toBe('child: parent');
+  });
+
+  test('module mixin works', async ({ page }) => {
+    const result = await page.evaluate(() => {
+      const code = `
+        module Greetable
+          def greet
+            "Hello!"
+          end
+        end
+        class Person
+          include Greetable
+        end
+        Person.new.greet
+      `;
+      return { value: eval(Opal.compile(code, { irb: true })) };
+    });
+
+    expect(result.value).toBe('Hello!');
+  });
+});
