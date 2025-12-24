@@ -5,7 +5,6 @@
   "description": "Ruby/Opal REPL for Firefox DevTools - Execute Ruby code directly in your browser",
   "devtools_page": "devtools.html",
   "permissions": [
-    "<all_urls>",
     "storage"
   ],
   "browser_action": {

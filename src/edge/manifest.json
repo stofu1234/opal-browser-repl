@@ -5,12 +5,7 @@
   "description": "Ruby/Opal REPL for Edge DevTools - Execute Ruby code directly in your browser",
   "devtools_page": "devtools.html",
   "permissions": [
-    "scripting",
-    "activeTab",
     "storage"
-  ],
-  "host_permissions": [
-    "<all_urls>"
   ],
   "action": {
     "default_popup": "popup/popup.html",
