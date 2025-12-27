@@ -2,6 +2,50 @@
 
 Chrome DevToolsにOpal Ruby REPLパネルを追加するブラウザ拡張機能です。
 
+---
+
+## Build Instructions for Reviewers
+
+### Requirements
+- **OS**: Windows, macOS, or Linux
+- **Node.js**: v18.0.0 or higher
+- **npm**: v8.0.0 or higher
+
+### Build Steps
+
+```bash
+# 1. Install dependencies
+npm install
+
+# 2. Build the extension for all browsers
+npm run build
+
+# 3. Output will be in dist/ folder
+#    - dist/chrome/   (Chrome extension)
+#    - dist/edge/     (Edge extension)
+#    - dist/firefox/  (Firefox extension)
+```
+
+### Build Script Details
+
+The `npm run build` command executes `scripts/build.js` which:
+1. Copies manifest.json for each browser
+2. Copies HTML, CSS files from src/shared/ui/
+3. Bundles JavaScript using esbuild (panel.js)
+4. Copies Opal library files from src/shared/lib/
+5. Copies icon files
+
+### Third-party Libraries
+
+The following open-source libraries are included in `src/shared/lib/`:
+- **opal.js** - Opal Ruby runtime (MIT License, https://opalrb.com)
+- **opal-parser.js** - Opal parser for runtime compilation (MIT License)
+- **native.js** - Opal native module for JS interop (MIT License)
+
+These libraries require `eval()` and `Function()` constructor to compile and execute Ruby code at runtime, which is essential for REPL functionality.
+
+---
+
 ## 機能
 
 - DevToolsに「Opal REPL」タブを追加
