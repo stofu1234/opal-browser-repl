@@ -14,6 +14,11 @@ export class OpalRepl {
     this.currentInputField = null;
     // Context stack for cd command (stores JS expressions to reach each context)
     this.contextStack = [];
+    // Autocomplete state
+    this.autoComplete = options.autoComplete !== false;
+    this.completionState = null;
+    this.suppressAutoComplete = false;
+    this._completionTimer = null;
   }
 
   /**
@@ -69,6 +74,7 @@ export class OpalRepl {
     // Store references
     this.currentInputLine = inputLine;
     this.currentInputField = inputField;
+    this.completionState = null;
 
     // Setup event listeners
     this.setupInputListeners(inputField);
@@ -87,9 +93,42 @@ export class OpalRepl {
       inputField.style.height = inputField.scrollHeight + 'px';
     };
 
-    inputField.addEventListener('input', autoResize);
+    inputField.addEventListener('input', () => {
+      autoResize();
+      if (this.suppressAutoComplete) return;
+      // Close any open dropdown right away so its stale fragment/position can't
+      // be accepted; the debounced pass re-opens it against the new text.
+      this.hideCompletions();
+      this.scheduleAutoComplete();
+    });
+
+    // Hide completion popup when the field loses focus (delay so clicks register)
+    inputField.addEventListener('blur', () => {
+      setTimeout(() => this.hideCompletions(), 120);
+    });
 
     inputField.addEventListener('keydown', (e) => {
+      // When the completion dropdown is open it captures navigation keys
+      if (this.completionState && this.completionState.active) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          this.moveCompletionSelection(1);
+          return;
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          this.moveCompletionSelection(-1);
+          return;
+        } else if (e.key === 'Enter' || e.key === 'Tab') {
+          e.preventDefault();
+          this.acceptSelectedCompletion();
+          return;
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          this.hideCompletions();
+          return;
+        }
+      }
+
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.execute();
@@ -104,7 +143,9 @@ export class OpalRepl {
         }
       } else if (e.key === 'Tab') {
         e.preventDefault();
-        this.insertTab();
+        this.handleTab();
+      } else if (e.key === 'Escape') {
+        this.hideCompletions();
       }
     });
   }
@@ -117,6 +158,420 @@ export class OpalRepl {
     const value = input.value;
     input.value = value.substring(0, start) + '  ' + value.substring(end);
     input.selectionStart = input.selectionEnd = start + 2;
+  }
+
+  // ==================== Autocomplete ====================
+
+  /**
+   * Analyze the input at the cursor and decide what kind of completion applies.
+   * Returns null when there is nothing to complete, otherwise an object:
+   *   { type: 'method' | 'constant' | 'identifier', fragment, fragStart, receiverExpr }
+   * - 'method'     : completing after a `.`, methods of `receiverExpr`
+   * - 'constant'   : a bare token starting with an uppercase letter (class/module)
+   * - 'identifier' : a bare token (local variable / top-level method / constant)
+   */
+  computeCompletionContext(value, cursor) {
+    const before = value.slice(0, cursor);
+    const fragMatch = before.match(/[A-Za-z_][A-Za-z0-9_]*$/);
+    const fragment = fragMatch ? fragMatch[0] : '';
+    const fragStart = before.length - fragment.length;
+    const prevChar = fragStart > 0 ? before.charAt(fragStart - 1) : '';
+
+    if (prevChar === '.') {
+      const receiverExpr = this.extractReceiver(before.slice(0, fragStart - 1));
+      if (!receiverExpr) return null;
+      return { type: 'method', fragment, fragStart, receiverExpr };
+    }
+
+    if (fragment === '') {
+      return { type: 'identifier', fragment, fragStart, receiverExpr: null };
+    }
+
+    const type = /^[A-Z]/.test(fragment) ? 'constant' : 'identifier';
+    return { type, fragment, fragStart, receiverExpr: null };
+  }
+
+  /**
+   * Walk backwards from the end of `text` to extract the receiver expression
+   * immediately preceding a `.`, balancing brackets and skipping string literals.
+   */
+  extractReceiver(text) {
+    let i = text.length - 1;
+    let depth = 0;
+
+    while (i >= 0) {
+      const c = text.charAt(i);
+
+      if (c === ')' || c === ']' || c === '}') {
+        depth++;
+        i--;
+        continue;
+      }
+      if (c === '(' || c === '[' || c === '{') {
+        if (depth === 0) break;
+        depth--;
+        i--;
+        continue;
+      }
+      if (depth > 0) {
+        i--;
+        continue;
+      }
+      if (/[A-Za-z0-9_.?!@$]/.test(c)) {
+        i--;
+        continue;
+      }
+      if (c === '"' || c === "'") {
+        const quote = c;
+        i--;
+        while (i >= 0 && text.charAt(i) !== quote) i--;
+        i--;
+        continue;
+      }
+      break;
+    }
+
+    return text.slice(i + 1).trim();
+  }
+
+  /**
+   * Longest common prefix of an array of strings.
+   */
+  commonPrefix(items) {
+    if (!items || items.length === 0) return '';
+    let prefix = items[0];
+    for (let i = 1; i < items.length; i++) {
+      while (prefix && items[i].indexOf(prefix) !== 0) {
+        prefix = prefix.slice(0, -1);
+      }
+      if (!prefix) break;
+    }
+    return prefix;
+  }
+
+  /**
+   * Heuristic: is it safe to auto-evaluate this receiver expression?
+   * We avoid implicitly running method calls (parentheses) on each keystroke.
+   */
+  receiverLooksSafe(expr) {
+    if (!expr) return false;
+    if (expr.indexOf('(') !== -1) return false;
+    return /^[A-Za-z_@$"'[\]\d\s:.,!?]+$/.test(expr);
+  }
+
+  /**
+   * Tab key handler. Falls back to indentation when there is nothing to complete.
+   */
+  async handleTab() {
+    const field = this.currentInputField;
+    if (!field) return;
+
+    const ctx = this.computeCompletionContext(field.value, field.selectionStart);
+    if (!ctx || (ctx.type !== 'method' && ctx.fragment === '')) {
+      this.insertTab();
+      return;
+    }
+
+    await this.triggerCompletion(ctx, { fromTab: true });
+  }
+
+  /**
+   * Debounced auto-completion triggered while typing.
+   */
+  scheduleAutoComplete() {
+    if (!this.autoComplete) return;
+    if (this._completionTimer) clearTimeout(this._completionTimer);
+    this._completionTimer = setTimeout(() => this.runAutoComplete(), 130);
+  }
+
+  async runAutoComplete() {
+    if (!this.currentInputField) return;
+    const field = this.currentInputField;
+    const ctx = this.computeCompletionContext(field.value, field.selectionStart);
+    if (!ctx) {
+      this.hideCompletions();
+      return;
+    }
+
+    let shouldOpen;
+    if (ctx.type === 'method') {
+      shouldOpen = this.receiverLooksSafe(ctx.receiverExpr);
+    } else {
+      shouldOpen = ctx.fragment.length >= 2;
+    }
+
+    if (!shouldOpen) {
+      this.hideCompletions();
+      return;
+    }
+
+    await this.triggerCompletion(ctx, { fromTab: false });
+  }
+
+  /**
+   * Fetch candidates for a completion context and present them.
+   */
+  async triggerCompletion(ctx, opts = {}) {
+    const result = await this.fetchCompletions(ctx);
+    // The input may have changed/closed while awaiting
+    if (!this.currentInputField) return;
+
+    const candidates = (result && result.candidates) || [];
+    if (candidates.length === 0) {
+      this.hideCompletions();
+      if (opts.fromTab && ctx.type !== 'method' && ctx.fragment === '') {
+        this.insertTab();
+      }
+      return;
+    }
+
+    if (opts.fromTab) {
+      // Expand to the longest common prefix so Tab makes progress
+      const common = this.commonPrefix(candidates);
+      if (common.length > ctx.fragment.length) {
+        this.replaceFragment(ctx, common);
+        ctx = { ...ctx, fragment: common };
+      }
+      if (candidates.length === 1) {
+        this.hideCompletions();
+        return;
+      }
+    }
+
+    this.showCompletionDropdown(candidates, ctx);
+  }
+
+  async fetchCompletions(ctx) {
+    if (!this.evalFunction) return { candidates: [] };
+    if (ctx.type === 'method') {
+      return await this.fetchMethodCompletions(ctx.receiverExpr, ctx.fragment);
+    }
+    return await this.fetchIdentifierCompletions(ctx.fragment, ctx.type === 'constant');
+  }
+
+  /**
+   * Get method-name candidates for a receiver expression by evaluating it and
+   * walking the prototype chain for Opal `$`-prefixed methods.
+   */
+  async fetchMethodCompletions(receiverExpr, fragment) {
+    const code = `
+      (function() {
+        try {
+          if (typeof Opal === 'undefined' || typeof Opal.compile !== 'function') {
+            return { error: 'no-opal', candidates: [] };
+          }
+          var receiver;
+          try {
+            receiver = eval(Opal.compile(${JSON.stringify(receiverExpr)}, { irb: true }));
+          } catch (e) {
+            return { error: 'receiver: ' + (e.message || e), candidates: [] };
+          }
+          if (receiver === undefined || receiver === null || receiver === Opal.nil) {
+            return { candidates: [] };
+          }
+
+          var out = [], seen = {};
+          function add(name) { if (name && !seen[name]) { seen[name] = true; out.push(name); } }
+
+          var o = receiver, guard = 0;
+          while (o != null && guard < 50) {
+            var keys = Object.getOwnPropertyNames(o);
+            for (var i = 0; i < keys.length; i++) {
+              var k = keys[i];
+              if (k.charAt(0) === '$' && k.charAt(1) !== '$') {
+                var name = k.substring(1);
+                if (name && name.charAt(0) !== '_') add(name);
+              }
+            }
+            o = Object.getPrototypeOf(o);
+            guard++;
+          }
+
+          var frag = ${JSON.stringify(fragment)};
+          var filtered = frag ? out.filter(function(n) { return n.indexOf(frag) === 0; }) : out;
+          filtered.sort();
+          return { candidates: filtered };
+        } catch (e) {
+          return { error: e.message || String(e), candidates: [] };
+        }
+      })()
+    `;
+
+    try {
+      const result = await this.evalFunction(code);
+      return result || { candidates: [] };
+    } catch (e) {
+      return { error: e.message || String(e), candidates: [] };
+    }
+  }
+
+  /**
+   * Get candidates for a bare token: local variables, top-level (or context)
+   * methods, and constants (class/module names).
+   */
+  async fetchIdentifierCompletions(fragment, preferConstants) {
+    const contextExpr = this.getContextExpression();
+
+    const code = `
+      (function() {
+        try {
+          if (typeof Opal === 'undefined') {
+            return { error: 'no-opal', candidates: [] };
+          }
+
+          var out = [], seen = {};
+          function add(name) { if (name && !seen[name]) { seen[name] = true; out.push(name); } }
+          function addMethods(obj) {
+            var o = obj, guard = 0;
+            while (o != null && guard < 50) {
+              var keys = Object.getOwnPropertyNames(o);
+              for (var i = 0; i < keys.length; i++) {
+                var k = keys[i];
+                if (k.charAt(0) === '$' && k.charAt(1) !== '$') {
+                  var name = k.substring(1);
+                  if (name && name.charAt(0) !== '_') add(name);
+                }
+              }
+              o = Object.getPrototypeOf(o);
+              guard++;
+            }
+          }
+
+          var ctx = ${contextExpr ? contextExpr : 'null'};
+          if (ctx) {
+            addMethods(ctx);
+            if (ctx.$$const) {
+              var ck = Object.keys(ctx.$$const);
+              for (var i = 0; i < ck.length; i++) add(ck[i]);
+            }
+          } else {
+            // Local variables defined in IRB mode
+            if (Opal.irb_vars) {
+              var lv = Object.keys(Opal.irb_vars);
+              for (var i = 0; i < lv.length; i++) {
+                var v = lv[i];
+                if (v.indexOf('$ret_or_') !== 0 && v.indexOf('__') !== 0) add(v);
+              }
+            }
+            // Top-level / Kernel methods
+            if (Opal.top) addMethods(Opal.top);
+            // Constants (class/module names)
+            if (Opal.Object && Opal.Object.$$const) {
+              var ck = Object.keys(Opal.Object.$$const);
+              for (var i = 0; i < ck.length; i++) add(ck[i]);
+            }
+          }
+
+          var frag = ${JSON.stringify(fragment)};
+          var filtered = frag ? out.filter(function(n) { return n.indexOf(frag) === 0; }) : out;
+          filtered.sort();
+          return { candidates: filtered };
+        } catch (e) {
+          return { error: e.message || String(e), candidates: [] };
+        }
+      })()
+    `;
+
+    try {
+      const result = await this.evalFunction(code);
+      return result || { candidates: [] };
+    } catch (e) {
+      return { error: e.message || String(e), candidates: [] };
+    }
+  }
+
+  /**
+   * Replace the current fragment in the input field with `replacement`.
+   */
+  replaceFragment(ctx, replacement) {
+    const field = this.currentInputField;
+    if (!field) return;
+
+    const value = field.value;
+    const end = ctx.fragStart + ctx.fragment.length;
+    const before = value.slice(0, ctx.fragStart);
+    const after = value.slice(end);
+
+    this.suppressAutoComplete = true;
+    field.value = before + replacement + after;
+    const pos = ctx.fragStart + replacement.length;
+    field.selectionStart = field.selectionEnd = pos;
+    field.style.height = 'auto';
+    field.style.height = field.scrollHeight + 'px';
+    field.focus();
+    this.suppressAutoComplete = false;
+  }
+
+  showCompletionDropdown(candidates, ctx) {
+    this.hideCompletions();
+    if (!this.currentInputLine || !this.consoleElement) return;
+
+    const MAX_ITEMS = 200;
+    const list = candidates.slice(0, MAX_ITEMS);
+
+    const dropdown = document.createElement('div');
+    dropdown.className = 'repl-completions';
+
+    list.forEach((candidate, index) => {
+      const item = document.createElement('div');
+      item.className = 'repl-completion-item' + (index === 0 ? ' selected' : '');
+      item.textContent = candidate;
+      item.addEventListener('mousedown', (e) => {
+        // Prevent the textarea from losing focus before we accept
+        e.preventDefault();
+        this.completionState.selectedIndex = index;
+        this.acceptSelectedCompletion();
+      });
+      dropdown.appendChild(item);
+    });
+
+    this.currentInputLine.style.position = 'relative';
+    this.currentInputLine.appendChild(dropdown);
+
+    this.completionState = {
+      active: true,
+      candidates: list,
+      selectedIndex: 0,
+      ctx,
+      dropdown
+    };
+  }
+
+  moveCompletionSelection(delta) {
+    const state = this.completionState;
+    if (!state || !state.active) return;
+
+    const n = state.candidates.length;
+    state.selectedIndex = (state.selectedIndex + delta + n) % n;
+
+    const items = state.dropdown.children;
+    for (let i = 0; i < items.length; i++) {
+      items[i].classList.toggle('selected', i === state.selectedIndex);
+    }
+    const selected = items[state.selectedIndex];
+    if (selected && selected.scrollIntoView) {
+      selected.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  acceptSelectedCompletion() {
+    const state = this.completionState;
+    if (!state || !state.active) return;
+
+    const candidate = state.candidates[state.selectedIndex];
+    this.replaceFragment(state.ctx, candidate);
+    this.hideCompletions();
+  }
+
+  hideCompletions() {
+    if (this._completionTimer) {
+      clearTimeout(this._completionTimer);
+      this._completionTimer = null;
+    }
+    if (this.completionState && this.completionState.dropdown) {
+      this.completionState.dropdown.remove();
+    }
+    this.completionState = null;
   }
 
   async checkOpalAvailability(silent = false) {
@@ -202,6 +657,8 @@ export class OpalRepl {
 
   async execute() {
     if (!this.currentInputField) return;
+
+    this.hideCompletions();
 
     const inputCode = this.currentInputField.value.trim();
     if (!inputCode) return;
@@ -606,6 +1063,7 @@ export class OpalRepl {
   }
 
   clear() {
+    this.hideCompletions();
     if (this.consoleElement) {
       this.consoleElement.innerHTML = '';
     }
@@ -652,6 +1110,7 @@ export class OpalRepl {
     this.log('  $_       - Last evaluation result', 'info');
     this.log('', 'info');
     this.log('Tips:', 'info');
+    this.log('  Tab          - Autocomplete methods/variables/constants', 'info');
     this.log('  Shift+Enter  - Multi-line input', 'info');
     this.log('  Ctrl+L       - Clear console', 'info');
     this.log('  Up/Down      - Navigate history', 'info');
