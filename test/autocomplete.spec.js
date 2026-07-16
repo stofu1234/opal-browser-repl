@@ -144,4 +144,23 @@ test.describe('Autocomplete - candidate generation', () => {
     const result = await repl.fetchIdentifierCompletions('zzz_no_such_thing', false);
     expect(result.candidates).toEqual([]);
   });
+
+  test('method completion excludes Opal method-missing stubs (opal-parser noise)', async ({ page }) => {
+    const repl = makeRepl(page);
+    // `compile_body` etc. are opal-parser internals present only as stubs on the
+    // shared prototype; real objects must not offer them for completion.
+    const result = await repl.fetchMethodCompletions('"hello"', 'com');
+    expect(result.candidates).not.toContain('compile_body');
+    expect(result.candidates).not.toContain('compile');
+    // A real String method with the same prefix is still offered
+    // (only present in newer cores; assert the stub-free property instead)
+    expect(result.candidates.every((c) => c.indexOf('compile_') !== 0)).toBe(true);
+  });
+
+  test('identifier completion excludes Opal method-missing stubs', async ({ page }) => {
+    const repl = makeRepl(page);
+    const result = await repl.fetchIdentifierCompletions('compile_', false);
+    // Every candidate would be an opal-parser stub; none should survive
+    expect(result.candidates).toEqual([]);
+  });
 });

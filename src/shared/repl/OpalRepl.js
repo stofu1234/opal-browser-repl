@@ -379,6 +379,10 @@ export class OpalRepl {
             for (var i = 0; i < keys.length; i++) {
               var k = keys[i];
               if (k.charAt(0) === '$' && k.charAt(1) !== '$') {
+                // Skip Opal method-missing stubs (one exists per method name seen
+                // anywhere in the program, e.g. opal-parser internals)
+                var fn = o[k];
+                if (fn && fn.$$stub) continue;
                 var name = k.substring(1);
                 if (name && name.charAt(0) !== '_') add(name);
               }
@@ -428,6 +432,10 @@ export class OpalRepl {
               for (var i = 0; i < keys.length; i++) {
                 var k = keys[i];
                 if (k.charAt(0) === '$' && k.charAt(1) !== '$') {
+                  // Skip Opal method-missing stubs (one per method name seen
+                  // anywhere in the program, e.g. opal-parser internals)
+                  var fn = o[k];
+                  if (fn && fn.$$stub) continue;
                   var name = k.substring(1);
                   if (name && name.charAt(0) !== '_') add(name);
                 }
